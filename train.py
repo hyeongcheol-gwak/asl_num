@@ -147,7 +147,7 @@ model = Sequential([
 optimizer = tf.keras.optimizers.Adam(learning_rate=0.001)
 model.compile(optimizer=optimizer, loss='sparse_categorical_crossentropy', metrics=['accuracy'])
 
-checkpoint = ModelCheckpoint('mlp3.h5', monitor='val_accuracy', verbose=1, save_best_only=True, mode='max')
+checkpoint = ModelCheckpoint('mlp.h5', monitor='val_accuracy', verbose=1, save_best_only=True, mode='max')
 early_stopping = EarlyStopping(monitor='val_loss', patience=15, verbose=1, restore_best_weights=True)
 reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=5, verbose=1)
 
