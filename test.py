@@ -1,12 +1,74 @@
 import cv2
 import mediapipe as mp
 import numpy as np
-from tensorflow.keras.models import load_model
+import tensorflow as tf
+import pickle
 from collections import deque
 
 INPUT_VIDEO_PATH = 'test_video.mp4'
 OUTPUT_TXT_PATH = 'result.txt'
-MODEL_PATH = 'asl_model.h5'
+MODEL_PATH = 'mlp.h5'
+LABEL_ENCODER_PATH = 'label_encoder.pkl'
+THRESHOLD = 0.85
+
+try:
+    model = tf.keras.models.load_model(MODEL_PATH)
+    with open(LABEL_ENCODER_PATH, 'rb') as f:
+        le = pickle.load(f)
+    print(f"모델 로드 성공: {MODEL_PATH}")
+except FileNotFoundError:
+    print("오류: 모델 파일이나 라벨 인코더를 찾을 수 없습니다.")
+    exit()
+
+def get_angle(v1, v2):
+    dot_product = np.dot(v1, v2)
+    norm_v1 = np.linalg.norm(v1)
+    norm_v2 = np.linalg.norm(v2)
+    if norm_v1 == 0 or norm_v2 == 0: return 0.0
+    cos_theta = dot_product / (norm_v1 * norm_v2)
+    cos_theta = np.clip(cos_theta, -1.0, 1.0)
+    return np.degrees(np.arccos(cos_theta)) / 180.0
+
+def extract_features(landmarks):
+    features = []
+    fingers = [
+        [1, 2, 3], [2, 3, 4], [0, 5, 6], [5, 6, 7], [6, 7, 8],
+        [0, 9, 10], [9, 10, 11], [10, 11, 12], [0, 13, 14], [13, 14, 15],
+        [14, 15, 16], [0, 17, 18], [17, 18, 19], [18, 19, 20]
+    ]
+    for f in fingers:
+        v1 = landmarks[f[0]] - landmarks[f[1]]
+        v2 = landmarks[f[2]] - landmarks[f[1]]
+        features.append(get_angle(v1, v2))
+        
+    thumb_tip = landmarks[4]
+    for tip_idx in [8, 12, 16, 20]:
+        features.append(np.linalg.norm(thumb_tip - landmarks[tip_idx]))
+        
+    return np.array(features)
+
+def preprocess_input(landmarks):
+    landmarks = np.array(landmarks)
+    wrist = landmarks[0, :]
+    relative = landmarks - wrist
+    max_val = np.max(np.abs(relative))
+    normalized = relative / max_val if max_val > 0 else relative
+    
+    features = extract_features(normalized)
+    combined = np.concatenate([normalized.flatten(), features])
+    
+    return combined.reshape(1, -1)
+
+def predict_gesture(processed_input, model, le, threshold=0.85):
+    prediction = model.predict(processed_input, verbose=0)
+    max_prob = np.max(prediction)
+    predicted_index = np.argmax(prediction)
+    
+    if max_prob < threshold:
+        return "Unknown", max_prob
+    
+    label = le.inverse_transform([predicted_index])[0]
+    return label, max_prob
 
 mp_hands = mp.solutions.hands
 hands = mp_hands.Hands(
@@ -14,17 +76,6 @@ hands = mp_hands.Hands(
     min_detection_confidence=0.7,
     min_tracking_confidence=0.5
 )
-
-try:
-    model = load_model(MODEL_PATH)
-except:
-    print("모델 파일이 없습니다. 먼저 모델을 학습시켜주세요.")
-    exit()
-
-CLASSES = {
-    0: '1', 1: '2', 2: '3', 3: '4', 4: '5',
-    5: '6', 6: '7', 7: '8', 8: '9', 9: '10'
-}
 
 prediction_buffer = deque(maxlen=10)
 STABILITY_THRESHOLD = 8
@@ -48,18 +99,21 @@ while cap.isOpened():
 
     if results.multi_hand_landmarks:
         for hand_landmarks in results.multi_hand_landmarks:
-            lm_list = []
-            for lm in hand_landmarks.landmark:
-                lm_list.append(lm.x)
-                lm_list.append(lm.y)
-                lm_list.append(lm.z)
+            landmark_list = [[lm.x, lm.y, lm.z] for lm in hand_landmarks.landmark]
             
-            input_data = np.array([lm_list])
-            pred_prob = model.predict(input_data, verbose=0)
-            pred_idx = np.argmax(pred_prob)
-            current_prediction = CLASSES[pred_idx]
-            
-            prediction_buffer.append(current_prediction)
+            try:
+                input_data = preprocess_input(landmark_list)
+                label, conf = predict_gesture(input_data, model, le, threshold=THRESHOLD)
+                
+                if label != "Unknown":
+                    current_prediction = label
+                    prediction_buffer.append(current_prediction)
+                else:
+                    prediction_buffer.append("None")
+                    
+            except Exception as e:
+                print(f"Error: {e}")
+                prediction_buffer.append("None")
 
     else:
         prediction_buffer.append("None")

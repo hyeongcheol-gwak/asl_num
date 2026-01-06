@@ -73,7 +73,7 @@ hands = mp_hands.Hands(max_num_hands=1, min_detection_confidence=0.7)
 
 cap = cv2.VideoCapture(0)
 
-print("\n--- 📷 실시간 인식 시작 (종료: 'q') ---")
+print("\n--- 실시간 인식 시작 (종료: 'q') ---")
 
 while cap.isOpened():
     ret, frame = cap.read()

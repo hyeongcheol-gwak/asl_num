@@ -7,59 +7,33 @@ from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, Dropout, BatchNormalization
 from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping, ReduceLROnPlateau
 import pickle
+import os
+
+RANDOM_SEED = 42
+np.random.seed(RANDOM_SEED)
+tf.random.set_seed(RANDOM_SEED)
+os.environ['PYTHONHASHSEED'] = str(RANDOM_SEED)
 
 try:
     data = pd.read_csv('dataset.csv')
 except FileNotFoundError:
     print("오류: 'dataset.csv' 파일을 찾을 수 없습니다.")
     exit()
+except Exception as e:
+    print(f"오류: 데이터 파일 읽기 실패 - {e}")
+    exit()
 
-X_raw = data.iloc[:, 1:].values
+if data.empty:
+    print("오류: 데이터 파일이 비어있습니다.")
+    exit()
+
+X_raw = data.iloc[:, 1:].values.astype(np.float32)
 y_raw = data.iloc[:, 0].values
 
-def get_angle(v1, v2):
-    dot_product = np.dot(v1, v2)
-    norm_v1 = np.linalg.norm(v1)
-    norm_v2 = np.linalg.norm(v2)
-    
-    if norm_v1 == 0 or norm_v2 == 0:
-        return 0.0
-        
-    cos_theta = dot_product / (norm_v1 * norm_v2)
-    cos_theta = np.clip(cos_theta, -1.0, 1.0)
-    
-    angle = np.arccos(cos_theta)
-    return np.degrees(angle) / 180.0
-
-def extract_features(landmarks):
-    features = []
-    
-    fingers = [
-        [1, 2, 3], [2, 3, 4],
-        [0, 5, 6], [5, 6, 7], [6, 7, 8],
-        [0, 9, 10], [9, 10, 11], [10, 11, 12],
-        [0, 13, 14], [13, 14, 15], [14, 15, 16],
-        [0, 17, 18], [17, 18, 19], [18, 19, 20]
-    ]
-    
-    for f in fingers:
-        p1, p2, p3 = landmarks[f[0]], landmarks[f[1]], landmarks[f[2]]
-        v1 = p1 - p2
-        v2 = p3 - p2
-        angle = get_angle(v1, v2)
-        features.append(angle)
-
-    thumb_tip = landmarks[4]
-    tips = [8, 12, 16, 20]
-    
-    for tip_idx in tips:
-        dist = np.linalg.norm(thumb_tip - landmarks[tip_idx])
-        features.append(dist)
-
-    return np.array(features)
+if X_raw.shape[1] != 63:
+    print(f"경고: 예상된 좌표 수(63)와 다릅니다. 현재: {X_raw.shape[1]}")
 
 def extract_features_vectorized(landmarks_batch):
-    batch_size = landmarks_batch.shape[0]
     features_list = []
     
     fingers = np.array([
@@ -114,14 +88,27 @@ def preprocess_coordinates_with_features(X_data):
 
 print("데이터 전처리 및 특성 추출 중...")
 X = preprocess_coordinates_with_features(X_raw)
+X = X.astype(np.float32)
 input_dim = X.shape[1]
 print(f"모델 입력 차원(Features): {input_dim}")
+
+if input_dim != 81:
+    print(f"경고: 예상된 입력 차원(81)과 다릅니다. 현재: {input_dim}")
 
 le = LabelEncoder()
 y = le.fit_transform(y_raw)
 num_classes = len(np.unique(y))
 
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+print(f"\n데이터셋 정보:")
+print(f"  총 샘플 수: {len(X)}")
+print(f"  클래스 수: {num_classes}")
+print(f"  클래스 분포:")
+unique, counts = np.unique(y, return_counts=True)
+for cls, cnt in zip(unique, counts):
+    label = le.inverse_transform([cls])[0]
+    print(f"    클래스 {cls} ({label}): {cnt}개 ({cnt/len(y)*100:.1f}%)")
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=RANDOM_SEED, stratify=y)
 
 def augment_data(X, y, noise_level=0.01, scale_range=0.05):
     augmented_X = []
@@ -132,15 +119,26 @@ def augment_data(X, y, noise_level=0.01, scale_range=0.05):
     augmented_X.append(X_noise)
     augmented_y.append(y)
     
+    num_coords = 63
+    num_angles = 14
+    
     scale_factor = np.random.uniform(1 - scale_range, 1 + scale_range, (X.shape[0], 1))
-    X_scaled = X * scale_factor
+    
+    X_coords = X[:, :num_coords] * scale_factor
+    
+    X_angles = X[:, num_coords:num_coords+num_angles] 
+    
+    X_dists = X[:, num_coords+num_angles:] * scale_factor
+    
+    X_scaled = np.concatenate([X_coords, X_angles, X_dists], axis=1)
+    
     augmented_X.append(X_scaled)
     augmented_y.append(y)
     
     return np.concatenate([X] + augmented_X), np.concatenate([y] + augmented_y)
 
 print(f"증강 전: {X_train.shape}")
-X_train, y_train = augment_data(X_train, y_train, noise_level=0.01, scale_range=0.05)
+X_train, y_train = augment_data(X_train, y_train)
 print(f"증강 후: {X_train.shape}")
 
 
@@ -170,9 +168,6 @@ model.compile(optimizer=optimizer, loss='sparse_categorical_crossentropy', metri
 checkpoint = ModelCheckpoint('mlp.h5', monitor='val_accuracy', verbose=1, save_best_only=True, mode='max')
 early_stopping = EarlyStopping(monitor='val_loss', patience=20, verbose=1, restore_best_weights=True)
 reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=5, verbose=1, min_lr=1e-6)
-cosine_annealing = tf.keras.callbacks.LearningRateScheduler(
-    lambda epoch: 0.001 * (np.cos(np.pi * epoch / 150) + 1) / 2
-)
 
 print("모델 학습 시작...")
 history = model.fit(
@@ -180,11 +175,16 @@ history = model.fit(
     epochs=150, 
     batch_size=64, 
     validation_data=(X_test, y_test),
-    callbacks=[checkpoint, early_stopping, reduce_lr, cosine_annealing]
+    callbacks=[checkpoint, early_stopping, reduce_lr]
 )
 
-loss, acc = model.evaluate(X_test, y_test)
+loss, acc = model.evaluate(X_test, y_test, verbose=0)
 print(f"\n최종 정확도: {acc*100:.2f}%")
+print(f"최종 손실: {loss:.4f}")
 
 with open('label_encoder.pkl', 'wb') as f:
     pickle.dump(le, f)
+
+with open('training_history.pkl', 'wb') as f:
+    pickle.dump(history.history, f)
+print("학습 히스토리가 'training_history.pkl'에 저장되었습니다.")
