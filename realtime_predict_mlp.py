@@ -6,12 +6,12 @@ import pickle
 
 # 1. 모델 및 라벨 인코더 로드
 try:
-    model = tf.keras.models.load_model('mlp.h5')
+    model = tf.keras.models.load_model('mlp3.h5')
     with open('label_encoder.pkl', 'rb') as f:
         le = pickle.load(f)
     print("모델과 라벨 인코더를 성공적으로 불러왔습니다.")
 except FileNotFoundError:
-    print("오류: 'mlp_model.h5' 또는 'label_encoder.pkl' 파일을 찾을 수 없습니다.")
+    print("오류: 'mlp2.h5' 또는 'label_encoder.pkl' 파일을 찾을 수 없습니다.")
     print("먼저 학습 코드를 실행하여 모델을 생성해주세요.")
     exit()
 
