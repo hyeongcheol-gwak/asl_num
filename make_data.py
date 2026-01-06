@@ -20,7 +20,7 @@ if not os.path.exists(file_path):
         writer = csv.writer(f)
         writer.writerow(header)
 
-cap = cv2.VideoCapture(1) # 웹캠 번호 확인 (0 또는 1)
+cap = cv2.VideoCapture(0) # 웹캠 번호 확인 (0 또는 1)
 
 print("0~9 키를 눌러 데이터를 저장하세요.")
 

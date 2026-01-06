@@ -82,7 +82,7 @@ class DataAugmenter(tf.keras.utils.Sequence):
         # 여기서는 성능을 위해 '노이즈'와 '스케일링'에 집중
         
         # 1. 노이즈 추가 (손 떨림 보정)
-        noise = np.random.normal(0, 0.005, batch_x.shape)
+        noise = np.random.normal(0, 0.02, batch_x.shape)
         
         # 2. 스케일링 (손 크기 변화)
         scale = np.random.uniform(0.9, 1.1, size=(batch_x.shape[0], 1, 1))
@@ -119,7 +119,7 @@ def build_transformer_model(input_shape, num_classes):
 
     # Transformer Blocks (깊게 쌓음)
     for _ in range(2): # 블록 2개 적층
-        x = transformer_encoder(x, head_size=64, num_heads=4, ff_dim=128, dropout=0.2)
+        x = transformer_encoder(x, head_size=64, num_heads=2, ff_dim=64, dropout=0.4)
 
     # Classification Head
     x = layers.GlobalAveragePooling1D()(x) # (21, 64) -> (64,) 로 압축
@@ -144,8 +144,8 @@ model.compile(
 model.summary()
 
 # 제너레이터 생성
-train_gen = DataAugmenter(X_train, y_train, batch_size=32, augment=True) # 학습시 증강 ON
-test_gen = DataAugmenter(X_test, y_test, batch_size=32, augment=False)   # 테스트시 증강 OFF
+train_gen = DataAugmenter(X_train, y_train, batch_size=8, augment=True) # 학습시 증강 ON
+test_gen = DataAugmenter(X_test, y_test, batch_size=8, augment=False)   # 테스트시 증강 OFF
 
 # 콜백 설정
 callbacks_list = [
