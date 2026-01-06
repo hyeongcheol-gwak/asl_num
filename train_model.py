@@ -6,7 +6,7 @@ from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, Dropout
 
 # 1. 데이터 로드
-data = pd.read_csv('asl_dataset.csv')
+data = pd.read_csv('dataset_combined.csv')
 
 # 입력(X)와 정답(y) 분리
 # iloc[:, 1:] -> 첫 번째 열(label)을 제외한 모든 좌표 데이터
