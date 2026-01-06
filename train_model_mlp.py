@@ -75,7 +75,7 @@ model.compile(optimizer='adam',
 
 # --- [개선 3] 콜백(Callbacks) 설정 ---
 # 학습 중 가장 성능이 좋은 모델만 저장
-checkpoint = ModelCheckpoint('asl_model.h5', monitor='val_accuracy', verbose=1, save_best_only=True, mode='max')
+checkpoint = ModelCheckpoint('mlp_model.h5', monitor='val_accuracy', verbose=1, save_best_only=True, mode='max')
 # 성능이 향상되지 않으면 조기에 학습 종료 (과적합 방지)
 early_stopping = EarlyStopping(monitor='val_loss', patience=10, verbose=1, restore_best_weights=True)
 # 성능이 정체되면 학습률을 낮춤 (세밀한 학습)
