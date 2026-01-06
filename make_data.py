@@ -3,62 +3,70 @@ import mediapipe as mp
 import numpy as np
 import csv
 
-# 저장할 파일 이름
-file_path = "asl_dataset.csv"
+file_path = 'asl_dataset.csv'
 
 mp_hands = mp.solutions.hands
 mp_drawing = mp.solutions.drawing_utils
 hands = mp_hands.Hands(max_num_hands=1, min_detection_confidence=0.7)
 
-# CSV 파일 헤더 생성 (라벨 + 21개 랜드마크의 x,y,z 좌표)
-header = ["label"]
+header = ['label']
 for i in range(21):
-    header.extend([f"x{i}", f"y{i}", f"z{i}"])
+    header.extend([f'x{i}', f'y{i}', f'z{i}'])
 
-# 파일 초기화 (처음 실행 시 헤더 작성)
-with open(file_path, "w", newline="") as f:
+with open(file_path, 'w', newline='') as f:
     writer = csv.writer(f)
     writer.writerow(header)
 
-cap = cv2.VideoCapture(1)  # 웹캠 실행
+cap = cv2.VideoCapture(1)
 
-print("수집 시작! 0~9 키를 눌러 데이터를 저장하세요.")
-print("예: 숫자 1 동작 -> 키보드 '0' 누름 / 숫자 10 동작 -> 키보드 '9' 누름")
+print("0~9 키를 눌러 데이터를 저장하세요.")
 
 while cap.isOpened():
     ret, frame = cap.read()
     if not ret:
         break
 
-    # 이미지 변환 및 전처리
+    # 1. 화면 좌우 반전
+    frame = cv2.flip(frame, 1)
+
     image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     result = hands.process(image)
     image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
 
+    # 현재 프레임에서 저장할 랜드마크 데이터 임시 저장용 변수
+    current_row = None 
+
     if result.multi_hand_landmarks:
         for hand_landmarks in result.multi_hand_landmarks:
-            # 랜드마크 그리기
             mp_drawing.draw_landmarks(image, hand_landmarks, mp_hands.HAND_CONNECTIONS)
-
-            # 좌표 추출
+            
+            # 랜드마크 데이터 추출
             row = []
             for lm in hand_landmarks.landmark:
                 row.extend([lm.x, lm.y, lm.z])
+            
+            # 손이 감지되었으므로 데이터를 current_row에 담아둠
+            current_row = row
 
-            # 키보드 입력 대기 및 저장
-            key = cv2.waitKey(1)
-            if 48 <= key <= 57:  # 키보드 숫자 0 ~ 9
-                label = key - 48  # 0을 누르면 라벨 0, 9를 누르면 라벨 9
+    cv2.imshow('Data Collection', image)
 
-                # CSV에 저장 [라벨, x0, y0, z0, ... ]
-                with open(file_path, "a", newline="") as f:
-                    writer = csv.writer(f)
-                    writer.writerow([label] + row)
-                print(f"Label {label} 저장됨")
+    # 2. 키 입력을 여기서 딱 한 번만 받음 (딜레이 해결 핵심)
+    key = cv2.waitKey(1)
 
-    cv2.imshow("Data Collection", image)
-    if cv2.waitKey(1) == 27:  # ESC 누르면 종료
+    # ESC 키 (종료)
+    if key == 27:
         break
+
+    # 숫자 키 (0~9) 입력 AND 손 데이터가 존재할 때만 저장
+    if 48 <= key <= 57:
+        if current_row is not None:
+            label = key - 48
+            with open(file_path, 'a', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow([label] + current_row)
+            print(f"Label {label} 저장됨")
+        else:
+            print("손이 감지되지 않아 저장할 수 없습니다.")
 
 cap.release()
 cv2.destroyAllWindows()
