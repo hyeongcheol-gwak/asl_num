@@ -6,7 +6,7 @@ import pickle
 
 # 1. 모델 및 라벨 인코더 로드
 try:
-    model = tf.keras.models.load_model('mlp_model.h5')
+    model = tf.keras.models.load_model('mlp.h5')
     with open('label_encoder.pkl', 'rb') as f:
         le = pickle.load(f)
     print("모델과 라벨 인코더를 성공적으로 불러왔습니다.")
