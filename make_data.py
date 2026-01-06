@@ -2,6 +2,7 @@ import cv2
 import mediapipe as mp
 import numpy as np
 import csv
+import os  # [추가됨] 파일 존재 여부 확인을 위해 필요
 
 file_path = 'asl_dataset.csv'
 
@@ -13,11 +14,13 @@ header = ['label']
 for i in range(21):
     header.extend([f'x{i}', f'y{i}', f'z{i}'])
 
-with open(file_path, 'w', newline='') as f:
-    writer = csv.writer(f)
-    writer.writerow(header)
+# [수정됨] 파일이 존재하지 않을 때만 헤더를 작성합니다.
+if not os.path.exists(file_path):
+    with open(file_path, 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(header)
 
-cap = cv2.VideoCapture(1)
+cap = cv2.VideoCapture(1) # 웹캠 번호 확인 (0 또는 1)
 
 print("0~9 키를 눌러 데이터를 저장하세요.")
 
@@ -50,7 +53,7 @@ while cap.isOpened():
 
     cv2.imshow('Data Collection', image)
 
-    # 2. 키 입력을 여기서 딱 한 번만 받음 (딜레이 해결 핵심)
+    # 2. 키 입력을 여기서 딱 한 번만 받음
     key = cv2.waitKey(1)
 
     # ESC 키 (종료)
@@ -61,6 +64,7 @@ while cap.isOpened():
     if 48 <= key <= 57:
         if current_row is not None:
             label = key - 48
+            # 여기는 이미 'a' (append) 모드이므로 이어쓰기가 잘 됩니다.
             with open(file_path, 'a', newline='') as f:
                 writer = csv.writer(f)
                 writer.writerow([label] + current_row)
