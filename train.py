@@ -31,7 +31,7 @@ X_raw = data.iloc[:, 1:].values.astype(np.float32)
 y_raw = data.iloc[:, 0].values
 
 if X_raw.shape[1] != 63:
-    print(f"경고: 예상된 좌표 수(63)와 다릅니다. 현재: {X_raw.shape[1]}")
+    print(f"경고: 예상된 좌표 수와 다릅니다. 현재: {X_raw.shape[1]}")
 
 def extract_features_vectorized(landmarks_batch):
     features_list = []
