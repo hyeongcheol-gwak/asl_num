@@ -11,9 +11,9 @@ import os
 
 INPUT_VIDEO_PATH = "test_video.mp4"
 OUTPUT_TXT_PATH = "result.txt"
-MODEL_PATH = "mlp.pth"
+MODEL_PATH = "transformer.pth"
 LABEL_ENCODER_PATH = "label_encoder.pkl"
-THRESHOLD = 0.85
+THRESHOLD = 0.7
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 

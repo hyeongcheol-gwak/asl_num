@@ -8,7 +8,7 @@ import pickle
 import copy
 
 LABEL_ENCODER_PATH = "label_encoder.pkl"
-THRESHOLD = 0.85
+THRESHOLD = 0.7
 
 
 def choose_model_path():
