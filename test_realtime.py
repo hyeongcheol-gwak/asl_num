@@ -193,7 +193,8 @@ def detect_model_type(model_path):
     if "transformer" in model_path.lower():
         try:
             state_dict = torch.load(model_path, map_location="cpu")
-            if "geo_mlp" in state_dict.keys() or "fusion_layer" in state_dict.keys():
+            keys = list(state_dict.keys())
+            if any("geo_mlp" in k for k in keys) or any("fusion_layer" in k for k in keys):
                 return "hybrid"
             return "transformer"
         except:
@@ -223,7 +224,12 @@ try:
 
     if model_type == "hybrid":
         model = HybridHandModel(
-            num_classes=num_classes, d_model=64, nhead=4, num_layers=3, dim_feedforward=128, dropout=0.1
+            num_classes=num_classes,
+            d_model=64,
+            nhead=4,
+            num_layers=3,
+            dim_feedforward=128,
+            dropout=0.1,
         ).to(device)
         print(f"Hybrid 모델 로드: {MODEL_PATH}")
     elif model_type == "transformer":
@@ -294,24 +300,43 @@ def extract_features(landmarks):
 
 
 def compute_geometric_features(landmarks):
-    connections = np.array([
-        [0, 1], [1, 2], [2, 3], [3, 4],
-        [0, 5], [5, 6], [6, 7], [7, 8],
-        [0, 9], [9, 10], [10, 11], [11, 12],
-        [0, 13], [13, 14], [14, 15], [15, 16],
-        [0, 17], [17, 18], [18, 19], [19, 20],
-    ])
+    connections = np.array(
+        [
+            [0, 1],
+            [1, 2],
+            [2, 3],
+            [3, 4],
+            [0, 5],
+            [5, 6],
+            [6, 7],
+            [7, 8],
+            [0, 9],
+            [9, 10],
+            [10, 11],
+            [11, 12],
+            [0, 13],
+            [13, 14],
+            [14, 15],
+            [15, 16],
+            [0, 17],
+            [17, 18],
+            [18, 19],
+            [19, 20],
+        ]
+    )
 
     vectors = landmarks[connections[:, 1]] - landmarks[connections[:, 0]]
     norms = np.linalg.norm(vectors, axis=1) + 1e-8
 
-    finger_indices = np.array([
-        [0, 1, 2, 3],
-        [4, 5, 6, 7],
-        [8, 9, 10, 11],
-        [12, 13, 14, 15],
-        [16, 17, 18, 19],
-    ])
+    finger_indices = np.array(
+        [
+            [0, 1, 2, 3],
+            [4, 5, 6, 7],
+            [8, 9, 10, 11],
+            [12, 13, 14, 15],
+            [16, 17, 18, 19],
+        ]
+    )
 
     angles = []
     for f_idx in finger_indices:
