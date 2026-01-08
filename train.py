@@ -1,18 +1,23 @@
 import pandas as pd
 import numpy as np
-import tensorflow as tf
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import Dataset, DataLoader, TensorDataset
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense, Dropout, BatchNormalization
-from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping, ReduceLROnPlateau
 import pickle
 import os
+import copy
 
 RANDOM_SEED = 42
 np.random.seed(RANDOM_SEED)
-tf.random.set_seed(RANDOM_SEED)
+torch.manual_seed(RANDOM_SEED)
+torch.cuda.manual_seed_all(RANDOM_SEED)
 os.environ['PYTHONHASHSEED'] = str(RANDOM_SEED)
+
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print(f"사용 장치: {device}")
 
 try:
     data = pd.read_csv('dataset.csv')
@@ -141,50 +146,126 @@ print(f"증강 전: {X_train.shape}")
 X_train, y_train = augment_data(X_train, y_train)
 print(f"증강 후: {X_train.shape}")
 
-
-model = Sequential([
-    Dense(512, input_shape=(input_dim,), activation='swish', kernel_initializer='he_normal'),
-    BatchNormalization(),
-    Dropout(0.5),
-
-    Dense(256, activation='swish', kernel_initializer='he_normal'),
-    BatchNormalization(),
-    Dropout(0.4),
-
-    Dense(128, activation='swish', kernel_initializer='he_normal'),
-    BatchNormalization(),
-    Dropout(0.3),
+class MLP(nn.Module):
+    def __init__(self, input_dim, num_classes):
+        super(MLP, self).__init__()
+        self.model = nn.Sequential(
+            nn.Linear(input_dim, 512),
+            nn.BatchNorm1d(512),
+            nn.SiLU(),
+            nn.Dropout(0.5),
+            
+            nn.Linear(512, 256),
+            nn.BatchNorm1d(256),
+            nn.SiLU(),
+            nn.Dropout(0.4),
+            
+            nn.Linear(256, 128),
+            nn.BatchNorm1d(128),
+            nn.SiLU(),
+            nn.Dropout(0.3),
+            
+            nn.Linear(128, 64),
+            nn.BatchNorm1d(64),
+            nn.SiLU(),
+            nn.Dropout(0.2),
+            
+            nn.Linear(64, num_classes)
+        )
+        
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
     
-    Dense(64, activation='swish', kernel_initializer='he_normal'),
-    BatchNormalization(),
-    Dropout(0.2),
-    
-    Dense(num_classes, activation='softmax')
-])
+    def forward(self, x):
+        return self.model(x)
 
-optimizer = tf.keras.optimizers.Adam(learning_rate=0.001)
-model.compile(optimizer=optimizer, loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+model = MLP(input_dim, num_classes).to(device)
+criterion = nn.CrossEntropyLoss()
+optimizer = optim.Adam(model.parameters(), lr=0.001)
+scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5, min_lr=1e-6, verbose=True)
 
-checkpoint = ModelCheckpoint('mlp.h5', monitor='val_accuracy', verbose=1, save_best_only=True, mode='max')
-early_stopping = EarlyStopping(monitor='val_loss', patience=20, verbose=1, restore_best_weights=True)
-reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.5, patience=5, verbose=1, min_lr=1e-6)
+X_train_tensor = torch.FloatTensor(X_train).to(device)
+y_train_tensor = torch.LongTensor(y_train).to(device)
+X_test_tensor = torch.FloatTensor(X_test).to(device)
+y_test_tensor = torch.LongTensor(y_test).to(device)
+
+train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
+train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
+
+best_val_acc = 0.0
+best_model_state = None
+patience = 20
+patience_counter = 0
+history = {'train_loss': [], 'train_acc': [], 'val_loss': [], 'val_acc': []}
 
 print("모델 학습 시작...")
-history = model.fit(
-    X_train, y_train, 
-    epochs=150, 
-    batch_size=64, 
-    validation_data=(X_test, y_test),
-    callbacks=[checkpoint, early_stopping, reduce_lr]
-)
+for epoch in range(150):
+    model.train()
+    train_loss = 0.0
+    train_correct = 0
+    train_total = 0
+    
+    for batch_X, batch_y in train_loader:
+        optimizer.zero_grad()
+        outputs = model(batch_X)
+        loss = criterion(outputs, batch_y)
+        loss.backward()
+        optimizer.step()
+        
+        train_loss += loss.item()
+        _, predicted = torch.max(outputs.data, 1)
+        train_total += batch_y.size(0)
+        train_correct += (predicted == batch_y).sum().item()
+    
+    train_loss /= len(train_loader)
+    train_acc = train_correct / train_total
+    
+    model.eval()
+    with torch.no_grad():
+        val_outputs = model(X_test_tensor)
+        val_loss = criterion(val_outputs, y_test_tensor).item()
+        _, val_predicted = torch.max(val_outputs.data, 1)
+        val_acc = (val_predicted == y_test_tensor).sum().item() / len(y_test_tensor)
+    
+    scheduler.step(val_loss)
+    
+    history['train_loss'].append(train_loss)
+    history['train_acc'].append(train_acc)
+    history['val_loss'].append(val_loss)
+    history['val_acc'].append(val_acc)
+    
+    if val_acc > best_val_acc:
+        best_val_acc = val_acc
+        best_model_state = copy.deepcopy(model.state_dict())
+        patience_counter = 0
+        torch.save(model.state_dict(), 'mlp.pth')
+        print(f"Epoch {epoch+1}/150 - Train Loss: {train_loss:.4f}, Train Acc: {train_acc*100:.2f}%, Val Loss: {val_loss:.4f}, Val Acc: {val_acc*100:.2f}% [Best]")
+    else:
+        patience_counter += 1
+        if (epoch + 1) % 10 == 0:
+            print(f"Epoch {epoch+1}/150 - Train Loss: {train_loss:.4f}, Train Acc: {train_acc*100:.2f}%, Val Loss: {val_loss:.4f}, Val Acc: {val_acc*100:.2f}%")
+    
+    if patience_counter >= patience:
+        print(f"Early stopping at epoch {epoch+1}")
+        break
 
-loss, acc = model.evaluate(X_test, y_test, verbose=0)
-print(f"\n최종 정확도: {acc*100:.2f}%")
-print(f"최종 손실: {loss:.4f}")
+if best_model_state is not None:
+    model.load_state_dict(best_model_state)
+
+model.eval()
+with torch.no_grad():
+    final_outputs = model(X_test_tensor)
+    final_loss = criterion(final_outputs, y_test_tensor).item()
+    _, final_predicted = torch.max(final_outputs.data, 1)
+    final_acc = (final_predicted == y_test_tensor).sum().item() / len(y_test_tensor)
+
+print(f"\n최종 정확도: {final_acc*100:.2f}%")
+print(f"최종 손실: {final_loss:.4f}")
 
 with open('label_encoder.pkl', 'wb') as f:
     pickle.dump(le, f)
 
 with open('training_history.pkl', 'wb') as f:
-    pickle.dump(history.history, f)
+    pickle.dump(history, f)
 print("학습 히스토리가 'training_history.pkl'에 저장되었습니다.")

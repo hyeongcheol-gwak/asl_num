@@ -1,20 +1,147 @@
 import cv2
 import mediapipe as mp
 import numpy as np
-import tensorflow as tf
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
 import pickle
+import copy
 
-MODEL_PATH = "mlp.h5"
+MODEL_PATH = "mlp.pth"
 LABEL_ENCODER_PATH = "label_encoder.pkl"
 THRESHOLD = 0.85
 
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+class MLP(nn.Module):
+    def __init__(self, input_dim, num_classes):
+        super(MLP, self).__init__()
+        self.model = nn.Sequential(
+            nn.Linear(input_dim, 512),
+            nn.BatchNorm1d(512),
+            nn.SiLU(),
+            nn.Dropout(0.5),
+            
+            nn.Linear(512, 256),
+            nn.BatchNorm1d(256),
+            nn.SiLU(),
+            nn.Dropout(0.4),
+            
+            nn.Linear(256, 128),
+            nn.BatchNorm1d(128),
+            nn.SiLU(),
+            nn.Dropout(0.3),
+            
+            nn.Linear(128, 64),
+            nn.BatchNorm1d(64),
+            nn.SiLU(),
+            nn.Dropout(0.2),
+            
+            nn.Linear(64, num_classes)
+        )
+    
+    def forward(self, x):
+        return self.model(x)
+
+class TransformerEncoderBlock(nn.Module):
+    def __init__(self, d_model, nhead, dim_feedforward, dropout=0.1):
+        super().__init__()
+        self.self_attn = nn.MultiheadAttention(d_model, nhead, dropout=dropout, batch_first=True)
+        self.linear1 = nn.Linear(d_model, dim_feedforward)
+        self.dropout = nn.Dropout(dropout)
+        self.linear2 = nn.Linear(dim_feedforward, d_model)
+        self.norm1 = nn.LayerNorm(d_model, eps=1e-6)
+        self.norm2 = nn.LayerNorm(d_model, eps=1e-6)
+        self.dropout1 = nn.Dropout(dropout)
+        self.dropout2 = nn.Dropout(dropout)
+    
+    def forward(self, src):
+        src2 = self.norm1(src)
+        src2, _ = self.self_attn(src2, src2, src2)
+        src = src + self.dropout1(src2)
+        
+        src2 = self.norm2(src)
+        src2 = self.linear2(self.dropout(F.gelu(self.linear1(src2))))
+        src = src + self.dropout2(src2)
+        
+        return src
+
+class TransformerModel(nn.Module):
+    def __init__(self, input_dim=3, d_model=64, nhead=4, num_layers=3, dim_feedforward=128, num_classes=10, dropout=0.1):
+        super().__init__()
+        self.d_model = d_model
+        
+        self.input_projection = nn.Linear(input_dim, d_model)
+        self.pos_embedding = nn.Embedding(21, d_model)
+        
+        encoder_layer = TransformerEncoderBlock(d_model, nhead, dim_feedforward, dropout)
+        self.transformer = nn.ModuleList([copy.deepcopy(encoder_layer) for _ in range(num_layers)])
+        
+        self.norm = nn.LayerNorm(d_model)
+        self.dropout_final = nn.Dropout(0.3)
+        self.classifier = nn.Sequential(
+            nn.Linear(d_model, 64),
+            nn.GELU(),
+            nn.Dropout(0.2),
+            nn.Linear(64, num_classes)
+        )
+    
+    def forward(self, x):
+        batch_size, seq_len, _ = x.shape
+        
+        x = self.input_projection(x)
+        
+        positions = torch.arange(seq_len, device=x.device).unsqueeze(0).expand(batch_size, -1)
+        pos_emb = self.pos_embedding(positions)
+        x = x + pos_emb
+        
+        for layer in self.transformer:
+            x = layer(x)
+        
+        x = self.norm(x)
+        x = x.mean(dim=1)
+        x = self.dropout_final(x)
+        x = self.classifier(x)
+        
+        return x
+
+def detect_model_type(model_path):
+    if 'transformer' in model_path.lower():
+        return 'transformer'
+    elif 'mlp' in model_path.lower():
+        return 'mlp'
+    else:
+        try:
+            state_dict = torch.load(model_path, map_location='cpu')
+            for key in state_dict.keys():
+                if 'transformer' in key or 'pos_embedding' in key:
+                    return 'transformer'
+            return 'mlp'
+        except:
+            return 'mlp'
+
 try:
-    model = tf.keras.models.load_model(MODEL_PATH)
     with open(LABEL_ENCODER_PATH, "rb") as f:
         le = pickle.load(f)
+    
+    num_classes = len(le.classes_)
+    model_type = detect_model_type(MODEL_PATH)
+    
+    if model_type == 'transformer':
+        model = TransformerModel(input_dim=3, d_model=64, nhead=4, num_layers=3, dim_feedforward=128, num_classes=num_classes, dropout=0.1).to(device)
+        print(f"Transformer 모델 로드: {MODEL_PATH}")
+    else:
+        model = MLP(81, num_classes).to(device)
+        print(f"MLP 모델 로드: {MODEL_PATH}")
+    
+    model.load_state_dict(torch.load(MODEL_PATH, map_location=device))
+    model.eval()
     print(f"모델 로드 성공: {MODEL_PATH}")
 except FileNotFoundError:
     print("오류: 모델 파일이나 라벨 인코더를 찾을 수 없습니다.")
+    exit()
+except Exception as e:
+    print(f"모델 로드 오류: {e}")
     exit()
 
 
@@ -59,7 +186,7 @@ def extract_features(landmarks):
     return np.array(features)
 
 
-def preprocess_input(landmarks):
+def preprocess_input_mlp(landmarks):
     landmarks = np.array(landmarks)
     wrist = landmarks[0, :]
     relative = landmarks - wrist
@@ -72,10 +199,29 @@ def preprocess_input(landmarks):
     return combined.reshape(1, -1)
 
 
-def predict_gesture(processed_input, model, le, threshold=0.85):
-    prediction = model.predict(processed_input, verbose=0)
-    max_prob = np.max(prediction)
-    predicted_index = np.argmax(prediction)
+def preprocess_input_transformer(landmarks):
+    landmarks = np.array(landmarks)
+    wrist = landmarks[0, :]
+    relative_landmarks = landmarks - wrist
+    
+    max_dist = np.max(np.linalg.norm(relative_landmarks, axis=1))
+    if max_dist > 0:
+        normalized_landmarks = relative_landmarks / max_dist
+    else:
+        normalized_landmarks = relative_landmarks
+    
+    return normalized_landmarks.reshape(1, 21, 3)
+
+
+def predict_gesture(processed_input, model, le, threshold=0.85, model_type='mlp'):
+    model.eval()
+    with torch.no_grad():
+        input_tensor = torch.FloatTensor(processed_input).to(device)
+        outputs = model(input_tensor)
+        probs = torch.softmax(outputs, dim=1)
+        max_prob, predicted_index = torch.max(probs, 1)
+        max_prob = max_prob.item()
+        predicted_index = predicted_index.item()
 
     if max_prob < threshold:
         return "Unknown", max_prob
@@ -108,13 +254,15 @@ while cap.isOpened():
         for hand_landmarks in result.multi_hand_landmarks:
             mp_drawing.draw_landmarks(frame, hand_landmarks, mp_hands.HAND_CONNECTIONS)
 
-            h, w, _ = frame.shape
-            landmark_list = [[lm.x * w, lm.y * h, lm.z] for lm in hand_landmarks.landmark]
+            landmark_list = [[lm.x, lm.y, lm.z] for lm in hand_landmarks.landmark]
 
             try:
-                input_data = preprocess_input(landmark_list)
+                if model_type == 'transformer':
+                    input_data = preprocess_input_transformer(landmark_list)
+                else:
+                    input_data = preprocess_input_mlp(landmark_list)
 
-                label, conf = predict_gesture(input_data, model, le, threshold=THRESHOLD)
+                label, conf = predict_gesture(input_data, model, le, threshold=THRESHOLD, model_type=model_type)
 
                 if label == "Unknown":
                     display_text = f"Unknown ({conf*100:.1f}%)"

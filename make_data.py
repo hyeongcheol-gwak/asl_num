@@ -67,17 +67,31 @@ input_file = 'dataset_temp.csv'
 output_file = 'dataset.csv'
 
 def create_left_hand_data():
+    if not os.path.exists(input_file):
+        print(f"오류: '{input_file}' 파일을 찾을 수 없습니다.")
+        return
+    
     with open(input_file, 'r', newline='') as infile:
         reader = csv.reader(infile)
-        header = next(reader)
+        try:
+            header = next(reader)
+        except StopIteration:
+            print(f"오류: '{input_file}' 파일이 비어있습니다. 데이터를 먼저 수집해주세요.")
+            return
         
         data_list = []
         
         for row in reader:
+            if not row:
+                continue
             data_list.append(row)
             
             original_label = row[0]
             coords = row[1:]
+            
+            if len(coords) != 63:
+                print(f"경고: 좌표 수가 올바르지 않습니다. 건너뜁니다.")
+                continue
             
             flipped_coords = []
             for i in range(0, len(coords), 3):
@@ -91,6 +105,10 @@ def create_left_hand_data():
             
             flipped_row = [original_label] + flipped_coords
             data_list.append(flipped_row)
+
+    if len(data_list) == 0:
+        print(f"오류: 변환할 데이터가 없습니다. '{input_file}'에 데이터를 먼저 저장해주세요.")
+        return
 
     with open(output_file, 'w', newline='') as outfile:
         writer = csv.writer(outfile)
