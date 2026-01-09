@@ -472,7 +472,7 @@ with open(OUTPUT_TXT_PATH, "w") as f:
                 stable_gesture = most_common
 
                 if not output_triggered:
-                    print(f"인식됨: {stable_gesture}")
+                    print(f"인식 됨: {stable_gesture}")
                     f.write(f"{stable_gesture}\n")
                     f.flush()
                     output_triggered = True
