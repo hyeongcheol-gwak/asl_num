@@ -467,7 +467,7 @@ while cap.isOpened():
                     display_text = f"Unknown ({conf*100:.1f}%)"
                     color = (0, 0, 255)
                 else:
-                    display_text = f"{label} ({conf*100:.1f}%)"
+                    display_text = f"{label + 1} ({conf*100:.1f}%)"
                     color = (0, 255, 0)
 
             except Exception as e:

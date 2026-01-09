@@ -452,7 +452,7 @@ with open(OUTPUT_TXT_PATH, "w") as f:
                     )
 
                     if label != "Unknown":
-                        current_prediction = label
+                        current_prediction = label + 1
                         prediction_buffer.append(current_prediction)
                     else:
                         prediction_buffer.append("None")
