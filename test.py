@@ -23,7 +23,7 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # 모델 실행 모드 설정
 USE_ENSEMBLE = False  # True: 앙상블 모드 (Full Stacking), False: 단일 모델 모드
-SINGLE_MODEL_PATH = "transformer.pth"  # 단일 모델 모드일 때 사용할 모델 경로
+SINGLE_MODEL_PATH = "mlp.pth"  # 단일 모델 모드일 때 사용할 모델 경로
 
 # ==========================================
 # 1. 모델 정의 (All Classes)
@@ -470,11 +470,11 @@ def detect_model_type_from_path(path):
 
 def main():
     print("=== ASL Recognition Test (Video) ===")
-    
+
     ensemble_predictor = None
     model = None
     model_type = "mlp"
-    
+
     # Label Encoder Load
     try:
         with open(LABEL_ENCODER_PATH, "rb") as f:
@@ -492,27 +492,32 @@ def main():
     else:
         path = SINGLE_MODEL_PATH
         print(f"Mode: Single Model using '{path}'")
-        
+
         if not os.path.exists(path):
             print(f"Model file not found: {path}")
             return
-            
+
         model_type = detect_model_type_from_path(path)
         print(f"Detected Model Type: {model_type}")
-        
-        if model_type == "mlp": model = MLP(81, num_classes).to(DEVICE)
-        elif model_type == "hybrid": model = HybridHandModel(num_classes).to(DEVICE)
-        elif model_type == "resnet1d": model = ResNet1D(num_classes).to(DEVICE)
-        elif model_type == "ultimate_transformer": model = UltimateTransformerModel(num_classes).to(DEVICE)
-        elif model_type == "gcn": model = GCNModel(num_classes).to(DEVICE)
-        
+
+        if model_type == "mlp":
+            model = MLP(81, num_classes).to(DEVICE)
+        elif model_type == "hybrid":
+            model = HybridHandModel(num_classes).to(DEVICE)
+        elif model_type == "resnet1d":
+            model = ResNet1D(num_classes).to(DEVICE)
+        elif model_type == "ultimate_transformer":
+            model = UltimateTransformerModel(num_classes).to(DEVICE)
+        elif model_type == "gcn":
+            model = GCNModel(num_classes).to(DEVICE)
+
         model.load_state_dict(torch.load(path, map_location=DEVICE))
         model.eval()
 
     # Video Processing
     mp_hands = mp.solutions.hands
     hands = mp_hands.Hands(max_num_hands=1, min_detection_confidence=0.7)
-    
+
     cap = cv2.VideoCapture(INPUT_VIDEO_PATH)
     if not cap.isOpened():
         print(f"Cannot open video: {INPUT_VIDEO_PATH}")
@@ -567,14 +572,29 @@ def main():
             if len(prediction_buffer) == 10:
                 most_common = max(set(prediction_buffer), key=prediction_buffer.count)
                 cnt = prediction_buffer.count(most_common)
+                # 안정적인 제스처 감지 (10프레임 중 8프레임 이상)
                 if cnt >= 8 and most_common != "None":
+                    # Case 1: 새로운 제스처가 처음 감지됨 (아직 아무것도 출력 안 함)
                     if not output_triggered:
                         print(f"Recognized: {most_common}")
                         f.write(f"{most_common}\n")
+                        f.flush()
                         output_triggered = True
+                        last_output_gesture = most_common
+
+                    # Case 2: 이미 뭔가 출력했지만, 다른 제스처로 안정적으로 바뀜 (예: 1 -> 2)
+                    elif output_triggered and most_common != last_output_gesture:
+                        print(f"Recognized (Changed): {most_common}")
+                        f.write(f"{most_common}\n")
+                        f.flush()
+                        last_output_gesture = most_common
+                        # output_triggered는 여전히 True 유지
+
                 else:
+                    # 제스처가 불안정하거나 손이 사라짐
                     if most_common == "None":
                         output_triggered = False
+                        last_output_gesture = None
 
             cv2.imshow("Test", frame)
             if cv2.waitKey(1) == ord("q"):
