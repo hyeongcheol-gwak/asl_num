@@ -17,13 +17,13 @@ warnings.filterwarnings("ignore")
 INPUT_VIDEO_PATH = "test_video.mp4"
 OUTPUT_TXT_PATH = "result.txt"
 LABEL_ENCODER_PATH = "label_encoder.pkl"
-THRESHOLD = 0.7
+THRESHOLD = 0.65
 MODELS_DIR = "models_final"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # 모델 실행 모드 설정
 USE_ENSEMBLE = False  # True: 앙상블 모드 (Full Stacking), False: 단일 모델 모드
-SINGLE_MODEL_PATH = "mlp.pth"  # 단일 모델 모드일 때 사용할 모델 경로
+SINGLE_MODEL_PATH = "transformer.pth"  # 단일 모델 모드일 때 사용할 모델 경로
 
 # ==========================================
 # 1. 모델 정의 (All Classes)
@@ -523,7 +523,7 @@ def main():
         print(f"Cannot open video: {INPUT_VIDEO_PATH}")
         return
 
-    prediction_buffer = deque(maxlen=10)
+    prediction_buffer = deque(maxlen=15)
     output_triggered = False
 
     with open(OUTPUT_TXT_PATH, "w") as f:
@@ -569,11 +569,11 @@ def main():
                 prediction_buffer.append("None")
 
             # Stability Check
-            if len(prediction_buffer) == 10:
+            if len(prediction_buffer) == 15:
                 most_common = max(set(prediction_buffer), key=prediction_buffer.count)
                 cnt = prediction_buffer.count(most_common)
-                # 안정적인 제스처 감지 (10프레임 중 8프레임 이상)
-                if cnt >= 8 and most_common != "None":
+                # 안정적인 제스처 감지 (15프레임 중 10프레임 이상)
+                if cnt >= 10 and most_common != "None":
                     # Case 1: 새로운 제스처가 처음 감지됨 (아직 아무것도 출력 안 함)
                     if not output_triggered:
                         print(f"Recognized: {most_common}")
