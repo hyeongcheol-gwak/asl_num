@@ -523,8 +523,9 @@ def main():
         print(f"Cannot open video: {INPUT_VIDEO_PATH}")
         return
 
-    prediction_buffer = deque(maxlen=15)
+    prediction_buffer = deque(maxlen=20)
     output_triggered = False
+    last_output_gesture = None
 
     with open(OUTPUT_TXT_PATH, "w") as f:
         while cap.isOpened():
@@ -569,32 +570,31 @@ def main():
                 prediction_buffer.append("None")
 
             # Stability Check
-            if len(prediction_buffer) == 15:
+            if len(prediction_buffer) == 20:
                 most_common = max(set(prediction_buffer), key=prediction_buffer.count)
                 cnt = prediction_buffer.count(most_common)
-                # 안정적인 제스처 감지 (15프레임 중 10프레임 이상)
-                if cnt >= 10 and most_common != "None":
-                    # Case 1: 새로운 제스처가 처음 감지됨 (아직 아무것도 출력 안 함)
-                    if not output_triggered:
+                # 안정적인 제스처 감지 (20프레임 중 12프레임 이상)
+                if cnt >= 12 and most_common != "None":
+                    # 이전과 다른 제스처일 때만 출력 (연속된 같은 제스처 방지)
+                    if most_common != last_output_gesture:
                         print(f"Recognized: {most_common}")
                         f.write(f"{most_common}\n")
                         f.flush()
+                        last_output_gesture = most_common
                         output_triggered = True
-                        last_output_gesture = most_common
-
-                    # Case 2: 이미 뭔가 출력했지만, 다른 제스처로 안정적으로 바뀜 (예: 1 -> 2)
-                    elif output_triggered and most_common != last_output_gesture:
-                        print(f"Recognized (Changed): {most_common}")
-                        f.write(f"{most_common}\n")
-                        f.flush()
-                        last_output_gesture = most_common
-                        # output_triggered는 여전히 True 유지
+                    else:
+                        # 같은 제스처가 지속되거나, None 이후 다시 같은 제스처가 들어온 경우
+                        # 출력은 하지 않지만 상태는 유지
+                        output_triggered = True
 
                 else:
                     # 제스처가 불안정하거나 손이 사라짐
+                    if most_common != "None":
+                        print(f"Debug - Candidate: {most_common} (Count: {cnt}/20)")
+
                     if most_common == "None":
                         output_triggered = False
-                        last_output_gesture = None
+                        # last_output_gesture는 초기화하지 않음
 
             cv2.imshow("Test", frame)
             if cv2.waitKey(1) == ord("q"):
