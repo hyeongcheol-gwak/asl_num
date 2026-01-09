@@ -533,7 +533,10 @@ def main():
             if not ret:
                 break
 
-            # frame = cv2.resize(frame, (640, 480)) # Optional
+            # frame = cv2.resize(frame, (640, 480))  # Optional
+            # frame = cv2.flip(
+            #    frame, 1
+            # )  # 좌우 반전 (필수: 학습 데이터 및 실시간 테스트와 동일하게 맞춤)
             image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             results = hands.process(image)
 
