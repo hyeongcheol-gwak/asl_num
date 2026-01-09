@@ -25,7 +25,7 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 USE_FLIP = False  # Set to True to test if mirroring improves accuracy (Training data was mirrored!)
 
 # 모델 실행 모드 설정
-USE_ENSEMBLE = False  # True: 앙상블 모드 (Full Stacking), False: 단일 모델 모드
+USE_ENSEMBLE = True  # True: 앙상블 모드 (Full Stacking), False: 단일 모델 모드
 SINGLE_MODEL_PATH = "transformer.pth"  # 단일 모델 모드일 때 사용할 모델 경로
 
 # ==========================================
@@ -570,7 +570,7 @@ def main():
                         confidence = max_prob.item()
                         
                         if confidence > THRESHOLD:
-                            pred_label = le.inverse_transform([idx.item()])[0]
+                            pred_label = le.inverse_transform([idx.item()])[0] + 1
                         else:
                             pred_label = "None" # Or "LowConf"
 

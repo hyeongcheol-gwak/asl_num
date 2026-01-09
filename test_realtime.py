@@ -14,7 +14,7 @@ warnings.filterwarnings("ignore")
 
 # 설정
 LABEL_ENCODER_PATH = "label_encoder.pkl"
-THRESHOLD = 0.7
+THRESHOLD = 0.0
 MODELS_DIR = "models_final"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
