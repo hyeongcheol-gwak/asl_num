@@ -25,8 +25,8 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 USE_FLIP = False  # Set to True to test if mirroring improves accuracy (Training data was mirrored!)
 
 # 모델 실행 모드 설정
-USE_ENSEMBLE = True  # True: 앙상블 모드 (Full Stacking), False: 단일 모델 모드
-SINGLE_MODEL_PATH = "transformer.pth"  # 단일 모델 모드일 때 사용할 모델 경로
+USE_ENSEMBLE = False  # True: 앙상블 모드 (Full Stacking), False: 단일 모델 모드
+SINGLE_MODEL_PATH = "mlp.pth"  # 단일 모델 모드일 때 사용할 모델 경로
 
 # ==========================================
 # 1. 모델 정의 (All Classes)
@@ -490,7 +490,7 @@ def main():
         return
 
     if USE_ENSEMBLE:
-        print(f"Mode: Full Ensemble (God Mode) using '{MODELS_DIR}'")
+        print(f"Mode: Full Ensemble using '{MODELS_DIR}'")
         model_type = "ensemble"
         ensemble_predictor = EnsemblePredictor(MODELS_DIR, num_classes)
         print("Ensemble Initialized.")
@@ -536,7 +536,7 @@ def main():
             ret, frame = cap.read()
             if not ret:
                 break
-            
+
             frame_count += 1
 
             if USE_FLIP:
@@ -566,28 +566,46 @@ def main():
 
                         probs = F.softmax(outputs, dim=1)
                         max_prob, idx = torch.max(probs, 1)
-                        
+
                         confidence = max_prob.item()
-                        
+
                         if confidence > THRESHOLD:
                             pred_label = le.inverse_transform([idx.item()])[0] + 1
                         else:
-                            pred_label = "None" # Or "LowConf"
+                            pred_label = "None"  # Or "LowConf"
 
                     except Exception as e:
                         print(e)
-            
+
             # Log to file (Frame-by-Frame)
             log_line = f"Frame {frame_count}: {pred_label} ({confidence:.4f})\n"
             f.write(log_line)
             # print(log_line.strip()) # Optional: too spammy for console
 
             # Visual Feedback
-            cv2.putText(frame, f"Frame: {frame_count}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-            cv2.putText(frame, f"Pred: {pred_label} ({confidence:.2f})", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-            
+            cv2.putText(
+                frame,
+                f"Frame: {frame_count}",
+                (10, 30),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1,
+                (0, 255, 0),
+                2,
+            )
+            cv2.putText(
+                frame,
+                f"Pred: {pred_label} ({confidence:.2f})",
+                (10, 70),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1,
+                (0, 255, 0),
+                2,
+            )
+
             if USE_FLIP:
-                 cv2.putText(frame, "FLIP: ON", (10, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                cv2.putText(
+                    frame, "FLIP: ON", (10, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2
+                )
 
             cv2.imshow("Debug View", frame)
             if cv2.waitKey(1) == ord("q"):

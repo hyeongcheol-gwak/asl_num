@@ -485,7 +485,7 @@ def main():
         return
 
     if USE_ENSEMBLE:
-        print(f"Mode: Full Ensemble (God Mode) using '{MODELS_DIR}'")
+        print(f"Mode: Full Ensemble using '{MODELS_DIR}'")
         model_type = "ensemble"
         ensemble_predictor = EnsemblePredictor(MODELS_DIR, num_classes)
         print("Ensemble Initialized.")

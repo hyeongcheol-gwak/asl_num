@@ -391,7 +391,7 @@ def detect_model_type_from_path(path):
 def main():
     print("\n=== ASL Real-time Recognition ===")
     print("1) Load Single Model (.pth)")
-    print("2) Full Ensemble (God Mode) - Requires 'models_final/'")
+    print("2) Full Ensemble - Requires 'models_final/'")
 
     choice = input("Select (1/2, default 2): ").strip()
     if not choice:
@@ -443,9 +443,9 @@ def main():
     mp_drawing = mp.solutions.drawing_utils
     hands = mp_hands.Hands(max_num_hands=1, min_detection_confidence=0.7)
 
-    cap = cv2.VideoCapture(1)  # Standard Webcam
+    cap = cv2.VideoCapture(0)  # Standard Webcam
     if not cap.isOpened():
-        cap = cv2.VideoCapture(0)  # Try external
+        cap = cv2.VideoCapture(1)  # Try external
 
     print("Starting Webcam... Press 'q' to quit.")
 

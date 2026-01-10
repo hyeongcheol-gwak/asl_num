@@ -51,7 +51,7 @@ def seed_everything(seed):
 
 
 seed_everything(CONFIG["SEED"])
-print(f"🔥 GOD MODE ACTIVATED on {CONFIG['DEVICE']}")
+print(f"ENSEMBLE MODE ACTIVATED on {CONFIG['DEVICE']}")
 
 
 # ==========================================
@@ -329,7 +329,7 @@ skf = StratifiedKFold(n_splits=CONFIG["N_FOLDS"], shuffle=True, random_state=CON
 if not os.path.exists("models_final"):
     os.makedirs("models_final")
 
-print("\n🚀 [Step 1] Deep Learning Ensemble (SAM Optimizer)")
+print("\n[Step 1] Deep Learning Ensemble (SAM Optimizer)")
 
 dl_models = [("res", ResNet1D), ("trans", TransformerModel), ("gcn", GCNModel)]
 
@@ -416,7 +416,7 @@ for model_idx, (name, model_cls) in enumerate(dl_models):
     stacking_train[:, col_start : col_start + NUM_CLASSES] = oof_preds
     stacking_test[:, col_start : col_start + NUM_CLASSES] = test_preds_fold
 
-print("\n🚀 [Step 2] Machine Learning Tuning & Training (Optuna + GBDT)")
+print("\n[Step 2] Machine Learning Tuning & Training (Optuna + GBDT)")
 
 
 # ML은 Feature Engineering을 다시 해야 함 (numpy array)
@@ -507,13 +507,13 @@ for ml_idx, (name, (cls, base_params)) in enumerate(ml_models_config.items()):
         test_pred
     )
 
-print("\n🚀 [Step 3] Final Stacking Meta-Learner")
+print("\n[Step 3] Final Stacking Meta-Learner")
 
 meta_model = LogisticRegression(max_iter=2000, C=1.0)
 meta_model.fit(stacking_train, y_train_full)
 final_acc = accuracy_score(y_test, meta_model.predict(stacking_test))
 
-print(f"======== 🏆 FINAL ENSEMBLE ACCURACY: {final_acc*100:.4f}% ========")
+print(f"======== FINAL ENSEMBLE ACCURACY: {final_acc*100:.4f}% ========")
 
 with open("models_final/meta_model.pkl", "wb") as f:
     pickle.dump(meta_model, f)
