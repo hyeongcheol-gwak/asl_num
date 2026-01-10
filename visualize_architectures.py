@@ -25,16 +25,16 @@ def visualize_mlp():
     fig, ax = setup_plot("MLP Architecture (Baseline)")
     
     # Input
-    draw_box(ax, 35, 90, 30, 6, "Input (Landmarks + Angles + Dists)\n[81-dim]", color='#95a5a6')
+    draw_box(ax, 30, 90, 40, 6, "Input [Landmarks + Angles + Dists]\n[81 - D]", color='#95a5a6')
     draw_arrow(ax, 50, 90, 0, -4)
     
     # Layers
     layers = [
-        "Linear(81 -> 512) + BN + SiLU",
-        "Linear(512 -> 256) + BN + SiLU",
-        "Linear(256 -> 128) + BN + SiLU",
-        "Linear(128 -> 64) + BN + SiLU",
-        "Linear(64 -> 10) [Output]"
+        "Linear [81 -> 512] + BN + SiLU",
+        "Linear [512 -> 256] + BN + SiLU",
+        "Linear [256 -> 128] + BN + SiLU",
+        "Linear [128 -> 64] + BN + SiLU",
+        "Linear [64 -> 10] [Output]"
     ]
     
     curr_y = 78
@@ -53,31 +53,31 @@ def visualize_hybrid():
     fig, ax = setup_plot("Hybrid Model Architecture\n(Transformer + Geometric MLP)")
     
     # Input splitting
-    draw_box(ax, 10, 90, 35, 6, "Landmark Coordinates\n[21, 3]", color='#2ecc71')
-    draw_box(ax, 55, 90, 35, 6, "Geometric Features\n[20]", color='#f1c40f', text_color='#2c3e50')
+    draw_box(ax, 15, 90, 25, 6, "Landmark Coordinates\n[(21, 3) - D]", color='#2ecc71')
+    draw_box(ax, 60, 90, 25, 6, "Geometric Features\n[20 - D]", color='#f1c40f', text_color='#2c3e50')
     
     # Transformer Stream
     draw_arrow(ax, 27.5, 90, 0, -4)
-    draw_box(ax, 15, 80, 25, 6, "Input Projection (64)", color='#27ae60')
+    draw_box(ax, 15, 80, 25, 6, "Input Projection [64 - D]", color='#2ecc71')
     draw_arrow(ax, 27.5, 80, 0, -4)
-    draw_box(ax, 15, 70, 25, 6, "Positional Embedding", color='#27ae60')
+    draw_box(ax, 15, 70, 25, 6, "Positional Embedding", color='#2ecc71')
     draw_arrow(ax, 27.5, 70, 0, -4)
-    draw_box(ax, 12, 55, 31, 10, "Transformer Encoder\n(3 Layers, 4 Heads)", color='#27ae60')
+    draw_box(ax, 15, 55, 25, 10, "Transformer Encoder\n[3 Layers, 4 Heads]", color='#2ecc71')
     draw_arrow(ax, 27.5, 55, 0, -4)
-    draw_box(ax, 15, 45, 25, 6, "CLS Token Feature", color='#27ae60')
+    draw_box(ax, 15, 45, 25, 6, "CLS Token Feature", color='#2ecc71')
     
     # MLP Stream
     draw_arrow(ax, 72.5, 90, 0, -15)
-    draw_box(ax, 60, 65, 25, 10, "Geometric MLP\n(Linear + BN + GELU)", color='#d4ac0d', text_color='#2c3e50')
+    draw_box(ax, 60, 65, 25, 10, "Geometric MLP\n[Linear + BN + GELU]", color='#f1c40f', text_color='#2c3e50')
     draw_arrow(ax, 72.5, 65, 0, -14)
-    draw_box(ax, 60, 45, 25, 6, "Geometric Feature (32)", color='#d4ac0d', text_color='#2c3e50')
+    draw_box(ax, 59, 45, 27, 6, "Geometric Feature [32 - D]", color='#f1c40f', text_color='#2c3e50')
     
     # Fusion
     draw_arrow(ax, 27.5, 45, 15, -10)
     draw_arrow(ax, 72.5, 45, -15, -10)
-    draw_box(ax, 35, 25, 30, 10, "Fusion Layer\n(Concat + Linear + BN + GELU)", color='#3498db')
+    draw_box(ax, 33, 25, 34, 10, "Fusion Layer\n[Concat + Linear + BN + GELU]", color='#3498db')
     draw_arrow(ax, 50, 25, 0, -5)
-    draw_box(ax, 40, 14, 20, 6, "Output (10)", color='#e74c3c')
+    draw_box(ax, 40, 14, 20, 6, "Output [10 - D]", color='#e74c3c')
     
     plt.tight_layout()
     plt.savefig('arch_hybrid.png', dpi=300, bbox_inches='tight')
