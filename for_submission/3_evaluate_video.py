@@ -1,7 +1,7 @@
 """
 MLP 모델을 사용하여 테스트 영상을 평가하는 스크립트
 - mlp.pth 모델을 로드하여 영상의 손동작을 인식합니다.
-- 배경 변화와 랜드마크 변화를 감지하여 새로운 제스처로 판단합니다.
+- 프레임 단위로 이미지 변경을 감지하고, 변경 시에만 제스처를 인식합니다.
 - 예측 결과를 prediction.txt에 저장하고 정확도를 계산합니다.
 """
 
@@ -13,7 +13,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 import pickle
 import os
-from collections import deque
 
 # 설정
 INPUT_VIDEO_PATH = "test_video.mp4"
@@ -23,9 +22,10 @@ LABEL_ENCODER_PATH = "../train/label_encoder.pkl"
 MODEL_PATH = "../train/mlp.pth"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# 제스처 전환 감지 설정
-STABILITY_FRAMES = 5  # 안정적인 제스처로 판단하기 위한 최소 프레임 수
-CHANGE_THRESHOLD = 0.15  # 랜드마크 변화량 임계값 (새 제스처 감지)
+# 이미지 변경 감지 설정
+IMAGE_CHANGE_THRESHOLD = 0.01  # 프레임 간 이미지 차이 임계값 (0~1)
+# 같은 이미지 그룹 내 노이즈: ~0.001-0.002, 다른 이미지 전환: ~0.027
+# 기준 프레임 방식이므로 0.01이 적절 (노이즈는 스킵, 실제 변경은 감지)
 
 # ==========================================
 # 1. MLP 모델 정의
@@ -107,17 +107,42 @@ def preprocess_input(landmarks):
     features = extract_features_mlp(normalized)
     return torch.FloatTensor(features).unsqueeze(0).to(DEVICE), normalized
 
-def calculate_landmark_change(prev_landmarks, curr_landmarks):
-    """두 랜드마크 간의 변화량 계산"""
-    if prev_landmarks is None or curr_landmarks is None:
-        return 1.0  # 최대 변화로 간주
+def calculate_frame_difference(frame1, frame2):
+    """두 프레임 간의 차이를 계산 (0~1 범위)"""
+    if frame1 is None or frame2 is None:
+        return 1.0  # 최대 차이로 간주
     
-    prev = np.array(prev_landmarks)
-    curr = np.array(curr_landmarks)
+    # 그레이스케일로 변환하여 비교
+    gray1 = cv2.cvtColor(frame1, cv2.COLOR_BGR2GRAY) if len(frame1.shape) == 3 else frame1
+    gray2 = cv2.cvtColor(frame2, cv2.COLOR_BGR2GRAY) if len(frame2.shape) == 3 else frame2
     
-    # 유클리드 거리의 평균
-    diff = np.linalg.norm(prev - curr, axis=1)
-    return np.mean(diff)
+    # 프레임 크기 맞추기
+    if gray1.shape != gray2.shape:
+        gray2 = cv2.resize(gray2, (gray1.shape[1], gray1.shape[0]))
+    
+    # 정규화된 픽셀 차이 계산
+    diff = cv2.absdiff(gray1, gray2)
+    mean_diff = np.mean(diff) / 255.0  # 0~1 범위로 정규화
+    
+    return mean_diff
+
+def is_new_image_group(curr_frame, reference_frames, threshold=IMAGE_CHANGE_THRESHOLD, debug=False):
+    """현재 프레임이 기존 이미지 그룹에 속하는지 판단"""
+    if len(reference_frames) == 0:
+        return True  # 첫 프레임은 항상 새로운 이미지 그룹
+    
+    # 모든 기준 프레임들과 비교하여 가장 비슷한 것 찾기
+    min_diff = float('inf')
+    for ref_frame in reference_frames:
+        diff = calculate_frame_difference(ref_frame, curr_frame)
+        if diff < min_diff:
+            min_diff = diff
+    
+    if debug:
+        print(f"  프레임 차이 (최소): {min_diff:.6f}, 임계값: {threshold}, 새로운 이미지: {min_diff > threshold}")
+    
+    # 가장 비슷한 기준 프레임과의 차이도 임계값보다 크면 새로운 이미지 그룹
+    return min_diff > threshold
 
 # ==========================================
 # 3. 메인 함수
@@ -176,12 +201,9 @@ def main():
     hands = mp_hands.Hands(max_num_hands=1, min_detection_confidence=0.7)
 
     # 제스처 감지 변수
-    prediction_buffer = deque(maxlen=STABILITY_FRAMES)
     detected_gestures = []
-    last_stable_gesture = None
-    previous_landmarks = None
+    reference_frames = []  # 각 이미지 그룹의 기준 프레임들 (첫 프레임들)
     frame_count = 0
-    gesture_start_frame = 0
 
     print("\n영상 처리 중...")
     print("-" * 60)
@@ -194,78 +216,50 @@ def main():
 
             frame_count += 1
 
-            # MediaPipe 처리
-            image_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            results = hands.process(image_rgb)
+            # 모든 기준 프레임들과 비교하여 새로운 이미지 그룹인지 확인
+            is_new_group = is_new_image_group(frame, reference_frames, debug=(frame_count <= 20))
+            
+            if is_new_group:
+                # MediaPipe 처리
+                image_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                results = hands.process(image_rgb)
 
-            current_prediction = None
-            current_landmarks = None
+                hand_detected = False
+                if results.multi_hand_landmarks:
+                    for hand_landmarks in results.multi_hand_landmarks:
+                        # 랜드마크 추출
+                        lm_list = [[lm.x, lm.y, lm.z] for lm in hand_landmarks.landmark]
 
-            if results.multi_hand_landmarks:
-                for hand_landmarks in results.multi_hand_landmarks:
-                    # 랜드마크 추출
-                    lm_list = [[lm.x, lm.y, lm.z] for lm in hand_landmarks.landmark]
+                        try:
+                            # 전처리 및 예측
+                            features, normalized_lm = preprocess_input(lm_list)
+                            outputs = model(features)
+                            probs = F.softmax(outputs, dim=1)
+                            max_prob, idx = torch.max(probs, 1)
 
-                    try:
-                        # 전처리 및 예측
-                        features, normalized_lm = preprocess_input(lm_list)
-                        outputs = model(features)
-                        probs = F.softmax(outputs, dim=1)
-                        max_prob, idx = torch.max(probs, 1)
+                            current_prediction = le.inverse_transform([idx.item()])[0]
+                            
+                            # 제스처 감지 및 저장
+                            detected_gestures.append(current_prediction)
+                            print(f"✓ 제스처 감지: {current_prediction} (프레임 {frame_count})")
+                            hand_detected = True
 
-                        current_prediction = le.inverse_transform([idx.item()])[0]
-                        current_landmarks = normalized_lm
-
-                    except Exception as e:
-                        print(f"프레임 {frame_count} 처리 중 오류: {e}")
-
-            # 예측 버퍼에 추가
-            if current_prediction is not None:
-                prediction_buffer.append(current_prediction)
-            else:
-                prediction_buffer.append(None)
-
-            # 안정적인 제스처 감지
-            if len(prediction_buffer) >= STABILITY_FRAMES:
-                # 가장 많이 나타난 예측값 찾기
-                valid_predictions = [p for p in prediction_buffer if p is not None]
+                        except Exception as e:
+                            print(f"프레임 {frame_count} 처리 중 오류: {e}")
+                else:
+                    # 손이 감지되지 않은 경우
+                    print(f"  프레임 {frame_count}: 손이 감지되지 않음")
                 
-                if valid_predictions:
-                    most_common = max(set(valid_predictions), key=valid_predictions.count)
-                    count = valid_predictions.count(most_common)
-                    
-                    # 안정성 체크: STABILITY_FRAMES의 80% 이상
-                    if count >= int(STABILITY_FRAMES * 0.8):
-                        # 랜드마크 변화량 계산
-                        change = calculate_landmark_change(previous_landmarks, current_landmarks)
-                        
-                        # 새로운 제스처 감지 조건:
-                        # 1) 이전 제스처와 다른 경우, 또는
-                        # 2) 같은 제스처이지만 랜드마크 변화가 큰 경우 (배경/손 주인 변경)
-                        is_new_gesture = False
-                        
-                        if last_stable_gesture is None:
-                            is_new_gesture = True
-                        elif most_common != last_stable_gesture:
-                            is_new_gesture = True
-                        elif change > CHANGE_THRESHOLD:
-                            # 같은 라벨이지만 배경이나 손이 많이 바뀐 경우
-                            is_new_gesture = True
-                            print(f"  프레임 {frame_count}: 같은 라벨({most_common})이지만 큰 변화 감지 (변화량: {change:.3f})")
-                        
-                        if is_new_gesture:
-                            detected_gestures.append(most_common)
-                            print(f"✓ 제스처 감지: {most_common} (프레임 {frame_count}, 안정도: {count}/{STABILITY_FRAMES})")
-                            last_stable_gesture = most_common
-                            gesture_start_frame = frame_count
-                        
-                        # 현재 랜드마크를 이전 랜드마크로 저장
-                        if current_landmarks is not None:
-                            previous_landmarks = current_landmarks.copy()
+                # 새로운 이미지 그룹의 기준 프레임으로 추가
+                reference_frames.append(frame.copy())
+            else:
+                # 기존 이미지 그룹에 속함 - 스킵
+                if frame_count <= 20:
+                    print(f"  프레임 {frame_count}: 기존 이미지 그룹에 속함 (스킵)")
 
             # 진행 상황 표시 (매 100프레임마다)
             if frame_count % 100 == 0:
-                print(f"  처리 중... {frame_count}/{total_frames} 프레임")
+                print(f"  처리 중... {frame_count}/{total_frames} 프레임 (기준 프레임 수: {len(reference_frames)})")
 
     cap.release()
     hands.close()
