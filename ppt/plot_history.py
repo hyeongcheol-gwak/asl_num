@@ -2,7 +2,7 @@ import matplotlib.pyplot as plt
 import pickle
 
 try:
-    with open('training_history.pkl', 'rb') as f:
+    with open('../train/training_history.pkl', 'rb') as f:
         history = pickle.load(f)
     
     if 'train_acc' in history:

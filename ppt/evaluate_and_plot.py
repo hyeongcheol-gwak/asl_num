@@ -439,7 +439,7 @@ def evaluate_model(model, X_test, y_test, model_type="mlp", batch_size=256):
 
 def main():
     print("Loading Data...")
-    df = pd.read_csv("dataset.csv")
+    df = pd.read_csv("../data/dataset.csv")
     X = df.iloc[:, 1:].values.astype(np.float32).reshape(-1, 21, 3)
     y = df.iloc[:, 0].values
 
@@ -456,20 +456,20 @@ def main():
     results = {}
 
     # 1. MLP
-    if os.path.exists("mlp.pth"):
+    if os.path.exists("../train/mlp.pth"):
         print("Evaluating MLP...")
         # Check input dim for MLP. 63 + 14 + 4 = 81
         mlp_model = MLP(81, NUM_CLASSES).to(DEVICE)
-        mlp_model.load_state_dict(torch.load("mlp.pth", map_location=DEVICE))
+        mlp_model.load_state_dict(torch.load("../train/mlp.pth", map_location=DEVICE))
         acc = evaluate_model(mlp_model, X_test, y_test, "mlp")
         results["MLP"] = acc
         print(f"MLP Acc: {acc*100:.2f}%")
 
     # 2. Hybrid (Transformer)
-    if os.path.exists("transformer.pth"):
+    if os.path.exists("../train/transformer.pth"):
         print("Evaluating Hybrid...")
         hybrid_model = HybridHandModel(NUM_CLASSES).to(DEVICE)
-        hybrid_model.load_state_dict(torch.load("transformer.pth", map_location=DEVICE))
+        hybrid_model.load_state_dict(torch.load("../train/transformer.pth", map_location=DEVICE))
         acc = evaluate_model(hybrid_model, X_test, y_test, "hybrid")
         results["Hybrid"] = acc
         print(f"Hybrid Acc: {acc*100:.2f}%")

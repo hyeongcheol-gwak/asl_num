@@ -15,18 +15,15 @@ warnings.filterwarnings("ignore")
 
 # 설정
 INPUT_VIDEO_PATH = "test_video.mp4"
-OUTPUT_TXT_PATH = "debug_log.txt"  # Changed for debug
-LABEL_ENCODER_PATH = "label_encoder.pkl"
+OUTPUT_TXT_PATH = "result.txt"
+LABEL_ENCODER_PATH = "../train/label_encoder.pkl"
 THRESHOLD = 0.0
 MODELS_DIR = "models_final"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# Debugging Options
-USE_FLIP = False  # Set to True to test if mirroring improves accuracy (Training data was mirrored!)
-
 # 모델 실행 모드 설정
-USE_ENSEMBLE = False  # True: 앙상블 모드 (Full Stacking), False: 단일 모델 모드
-SINGLE_MODEL_PATH = "mlp.pth"  # 단일 모델 모드일 때 사용할 모델 경로
+USE_ENSEMBLE = True  # True: 앙상블 모드 (Full Stacking), False: 단일 모델 모드
+SINGLE_MODEL_PATH = "../train/transformer.pth"  # 단일 모델 모드일 때 사용할 모델 경로
 
 # ==========================================
 # 1. 모델 정의 (All Classes)
@@ -472,9 +469,7 @@ def detect_model_type_from_path(path):
 
 
 def main():
-    print("=== ASL Recognition DEBUG Mode ===")
-    print(f"USE_FLIP: {USE_FLIP}")
-    print(f"Output: {OUTPUT_TXT_PATH}")
+    print("=== ASL Recognition Test (Video) ===")
 
     ensemble_predictor = None
     model = None
@@ -528,25 +523,24 @@ def main():
         print(f"Cannot open video: {INPUT_VIDEO_PATH}")
         return
 
-    frame_count = 0
+    prediction_buffer = deque(maxlen=20)
+    output_triggered = False
+    last_output_gesture = None
 
     with open(OUTPUT_TXT_PATH, "w") as f:
-        print("Processing frames... (Press 'q' to stop early)")
         while cap.isOpened():
             ret, frame = cap.read()
             if not ret:
                 break
 
-            frame_count += 1
-
-            if USE_FLIP:
-                frame = cv2.flip(frame, 1)
-
+            # frame = cv2.resize(frame, (640, 480))  # Optional
+            # frame = cv2.flip(
+            #    frame, 1
+            # )  # 좌우 반전 (필수: 학습 데이터 및 실시간 테스트와 동일하게 맞춤)
             image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             results = hands.process(image)
 
             pred_label = "None"
-            confidence = 0.0
 
             if results.multi_hand_landmarks:
                 for hl in results.multi_hand_landmarks:
@@ -567,53 +561,50 @@ def main():
                         probs = F.softmax(outputs, dim=1)
                         max_prob, idx = torch.max(probs, 1)
 
-                        confidence = max_prob.item()
-
-                        if confidence > THRESHOLD:
-                            pred_label = le.inverse_transform([idx.item()])[0] + 1
+                        if max_prob.item() > THRESHOLD:
+                            pred_label = le.inverse_transform([idx.item()])[0]
+                            prediction_buffer.append(pred_label + 1)  # Class 0 -> 1
                         else:
-                            pred_label = "None"  # Or "LowConf"
+                            prediction_buffer.append("None")
 
                     except Exception as e:
                         print(e)
+            else:
+                prediction_buffer.append("None")
 
-            # Log to file (Frame-by-Frame)
-            log_line = f"Frame {frame_count}: {pred_label} ({confidence:.4f})\n"
-            f.write(log_line)
-            # print(log_line.strip()) # Optional: too spammy for console
+            # Stability Check
+            if len(prediction_buffer) == 20:
+                most_common = max(set(prediction_buffer), key=prediction_buffer.count)
+                cnt = prediction_buffer.count(most_common)
+                # 안정적인 제스처 감지 (20프레임 중 15프레임 이상)
+                if cnt >= 15 and most_common != "None":
+                    # 이전과 다른 제스처일 때만 출력 (연속된 같은 제스처 방지)
+                    if most_common != last_output_gesture:
+                        print(f"Recognized: {most_common}")
+                        f.write(f"{most_common}\n")
+                        f.flush()
+                        last_output_gesture = most_common
+                        output_triggered = True
+                    else:
+                        # 같은 제스처가 지속되거나, None 이후 다시 같은 제스처가 들어온 경우
+                        # 출력은 하지 않지만 상태는 유지
+                        output_triggered = True
 
-            # Visual Feedback
-            cv2.putText(
-                frame,
-                f"Frame: {frame_count}",
-                (10, 30),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                1,
-                (0, 255, 0),
-                2,
-            )
-            cv2.putText(
-                frame,
-                f"Pred: {pred_label} ({confidence:.2f})",
-                (10, 70),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                1,
-                (0, 255, 0),
-                2,
-            )
+                else:
+                    # 제스처가 불안정하거나 손이 사라짐
+                    if most_common != "None":
+                        print(f"Debug - Candidate: {most_common} (Count: {cnt}/20)")
 
-            if USE_FLIP:
-                cv2.putText(
-                    frame, "FLIP: ON", (10, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2
-                )
+                    if most_common == "None":
+                        output_triggered = False
+                        # last_output_gesture는 초기화하지 않음
 
-            cv2.imshow("Debug View", frame)
+            cv2.imshow("Test", frame)
             if cv2.waitKey(1) == ord("q"):
                 break
 
     cap.release()
     cv2.destroyAllWindows()
-    print("Done. Results saved to debug_log.txt")
 
 
 if __name__ == "__main__":

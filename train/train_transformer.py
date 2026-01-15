@@ -20,9 +20,9 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"사용 장치: {device}")
 
 try:
-    data = pd.read_csv("dataset.csv")
+    data = pd.read_csv("../data/dataset.csv")
 except FileNotFoundError:
-    print("오류: 'dataset.csv' 파일을 찾을 수 없습니다.")
+    print("오류: '../data/dataset.csv' 파일을 찾을 수 없습니다.")
     exit()
 
 if data.empty:
