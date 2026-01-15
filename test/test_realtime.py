@@ -5,7 +5,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import pickle
-import copy
 import os
 import warnings
 
@@ -14,12 +13,12 @@ warnings.filterwarnings("ignore")
 
 # 설정
 LABEL_ENCODER_PATH = "../train/label_encoder.pkl"
+MODEL_PATH = "../train/transformer.pth"  # 기본 모델 경로
 THRESHOLD = 0.0
-MODELS_DIR = "models_final"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # ==========================================
-# 1. 모델 정의 (All Classes)
+# 1. 모델 정의
 # ==========================================
 
 
@@ -91,106 +90,12 @@ class HybridHandModel(nn.Module):
         x_emb = self.input_projection(x_coords)
         cls_tokens = self.cls_token.expand(batch_size, -1, -1)
         x_seq = torch.cat((cls_tokens, x_emb), dim=1)
-        # Fix: Ensure pos_embedding size matches x_seq (handle different sequence lengths if needed, though here fixed)
+        # Fix: Ensure pos_embedding size matches x_seq
         x_seq = x_seq + self.pos_embedding[:, : x_seq.size(1), :]
         t_out = self.transformer(x_seq)
         t_feature = t_out[:, 0, :]
         g_feature = self.geo_mlp(x_geo)
         return self.fusion_layer(torch.cat((t_feature, g_feature), dim=1))
-
-
-# 1.3 ResNet1D
-class ResNet1D(nn.Module):
-    def __init__(self, num_classes):
-        super().__init__()
-        self.conv = nn.Sequential(
-            nn.Conv1d(3, 64, 3, 1, 1),
-            nn.BatchNorm1d(64),
-            nn.GELU(),
-            nn.Conv1d(64, 128, 3, 2, 1),
-            nn.BatchNorm1d(128),
-            nn.GELU(),
-            nn.Conv1d(128, 256, 3, 2, 1),
-            nn.BatchNorm1d(256),
-            nn.GELU(),
-        )
-        self.geo_fc = nn.Sequential(nn.Linear(20, 64), nn.GELU())
-        self.head = nn.Linear(256 + 64, num_classes)
-
-    def forward(self, x, geo):
-        f = self.conv(x.permute(0, 2, 1)).mean(dim=2)
-        g = self.geo_fc(geo)
-        return self.head(torch.cat([f, g], dim=1))
-
-
-# 1.4 UltimateTransformer
-class UltimateTransformerModel(nn.Module):
-    def __init__(self, num_classes):
-        super().__init__()
-        self.emb = nn.Linear(3, 128)
-        self.pos = nn.Parameter(torch.randn(1, 21, 128) * 0.02)
-        self.enc = nn.TransformerEncoder(
-            nn.TransformerEncoderLayer(128, 8, 256, 0.2, "gelu", batch_first=True), 4
-        )
-        self.geo_fc = nn.Sequential(nn.Linear(20, 64), nn.GELU())
-        self.head = nn.Linear(128 + 64, num_classes)
-
-    def forward(self, x, geo):
-        x = self.enc(self.emb(x) + self.pos).mean(dim=1)
-        g = self.geo_fc(geo)
-        return self.head(torch.cat([x, g], dim=1))
-
-
-# 1.5 GCNModel
-def get_adj():
-    edges = [
-        (0, 1),
-        (1, 2),
-        (2, 3),
-        (3, 4),
-        (0, 5),
-        (5, 6),
-        (6, 7),
-        (7, 8),
-        (0, 9),
-        (9, 10),
-        (10, 11),
-        (11, 12),
-        (0, 13),
-        (13, 14),
-        (14, 15),
-        (15, 16),
-        (0, 17),
-        (17, 18),
-        (18, 19),
-        (19, 20),
-    ]
-    A = np.eye(21, dtype=np.float32)
-    for i, j in edges:
-        A[i, j] = A[j, i] = 1.0
-    return torch.tensor(
-        np.diag(np.power(np.sum(A, axis=0), -0.5)) @ A @ np.diag(np.power(np.sum(A, axis=0), -0.5)),
-        dtype=torch.float32,
-    ).to(DEVICE)
-
-
-ADJ_MATRIX = get_adj()
-
-
-class GCNModel(nn.Module):
-    def __init__(self, num_classes):
-        super().__init__()
-        self.gc1 = nn.Linear(3, 64)
-        self.gc2 = nn.Linear(64, 128)
-        self.gc3 = nn.Linear(128, 256)
-        self.head = nn.Linear(256, num_classes)
-
-    def forward(self, x, geo):
-        adj = ADJ_MATRIX
-        x = F.gelu(torch.matmul(adj, self.gc1(x)))
-        x = F.gelu(torch.matmul(adj, self.gc2(x)))
-        x = F.gelu(torch.matmul(adj, self.gc3(x))).mean(dim=1)
-        return self.head(x)
 
 
 # ==========================================
@@ -200,26 +105,9 @@ def compute_geometric_features(landmarks):
     if landmarks.ndim == 2:
         landmarks = landmarks[np.newaxis, ...]
     connections = [
-        (0, 1),
-        (1, 2),
-        (2, 3),
-        (3, 4),
-        (0, 5),
-        (5, 6),
-        (6, 7),
-        (7, 8),
-        (0, 9),
-        (9, 10),
-        (10, 11),
-        (11, 12),
-        (0, 13),
-        (13, 14),
-        (14, 15),
-        (15, 16),
-        (0, 17),
-        (17, 18),
-        (18, 19),
-        (19, 20),
+        (0, 1),(1, 2),(2, 3),(3, 4),(0, 5),(5, 6),(6, 7),(7, 8),
+        (0, 9),(9, 10),(10, 11),(11, 12),(0, 13),(13, 14),(14, 15),(15, 16),
+        (0, 17),(17, 18),(18, 19),(19, 20),
     ]
     vecs = (
         landmarks[:, [c[1] for c in connections], :] - landmarks[:, [c[0] for c in connections], :]
@@ -240,20 +128,9 @@ def compute_geometric_features(landmarks):
 def extract_features_mlp(landmarks):
     lm_flat = landmarks.reshape(-1, 3)
     fingers = [
-        [1, 2, 3],
-        [2, 3, 4],
-        [0, 5, 6],
-        [5, 6, 7],
-        [6, 7, 8],
-        [0, 9, 10],
-        [9, 10, 11],
-        [10, 11, 12],
-        [0, 13, 14],
-        [13, 14, 15],
-        [14, 15, 16],
-        [0, 17, 18],
-        [17, 18, 19],
-        [18, 19, 20],
+        [1, 2, 3], [2, 3, 4], [0, 5, 6], [5, 6, 7], [6, 7, 8],
+        [0, 9, 10], [9, 10, 11], [10, 11, 12], [0, 13, 14],
+        [13, 14, 15], [14, 15, 16], [0, 17, 18], [17, 18, 19], [18, 19, 20],
     ]
     angles = [
         np.degrees(
@@ -286,7 +163,7 @@ def preprocess_input(landmarks, model_type):
 
     if model_type == "mlp":
         return torch.FloatTensor(extract_features_mlp(normalized)).unsqueeze(0).to(DEVICE)
-    elif model_type in ["hybrid", "ultimate_transformer", "resnet1d", "gcn", "ensemble"]:
+    elif model_type == "hybrid":
         return (
             torch.FloatTensor(normalized).unsqueeze(0).to(DEVICE),
             torch.FloatTensor(compute_geometric_features(normalized)).to(DEVICE),
@@ -295,94 +172,17 @@ def preprocess_input(landmarks, model_type):
 
 
 # ==========================================
-# 3. Ensemble Helper
-# ==========================================
-class EnsemblePredictor:
-    def __init__(self, models_dir="models_final", num_classes=10):
-        self.models_dir = models_dir
-        self.num_classes = num_classes
-        self.dl_models = []
-        self.ml_models = []
-        self.meta_model = None
-        self.load_models()
-
-    def load_models(self):
-        print("Loading Ensemble Models...")
-        for name, cls in {
-            "res": ResNet1D,
-            "trans": UltimateTransformerModel,
-            "gcn": GCNModel,
-        }.items():
-            for fold in range(5):
-                path = os.path.join(self.models_dir, f"{name}_fold{fold}.pth")
-                if os.path.exists(path):
-                    model = cls(self.num_classes).to(DEVICE)
-                    model.load_state_dict(torch.load(path, map_location=DEVICE))
-                    model.eval()
-                    self.dl_models.append((name, fold, model))
-
-        try:
-            import xgboost, lightgbm, catboost
-
-            ml_names = ["xgb", "lgbm", "cat"]
-            for name in ml_names:
-                for fold in range(5):
-                    path = os.path.join(self.models_dir, f"{name}_fold{fold}.pkl")
-                    if os.path.exists(path):
-                        with open(path, "rb") as f:
-                            self.ml_models.append((name, fold, pickle.load(f)))
-        except ImportError:
-            print("Warning: ML libraries not found.")
-
-        meta_path = os.path.join(self.models_dir, "meta_model.pkl")
-        if os.path.exists(meta_path):
-            with open(meta_path, "rb") as f:
-                self.meta_model = pickle.load(f)
-
-    def predict(self, coords, geo):
-        preds = {}
-        with torch.no_grad():
-            for name, _, model in self.dl_models:
-                p = F.softmax(model(coords, geo), dim=1).cpu().numpy()
-                preds.setdefault(name, []).append(p)
-
-        ml_in = np.concatenate([coords.cpu().numpy().reshape(1, -1), geo.cpu().numpy()], axis=1)
-        for name, _, model in self.ml_models:
-            preds.setdefault(name, []).append(model.predict_proba(ml_in))
-
-        final_feats = []
-        for name in ["res", "trans", "gcn", "xgb", "lgbm", "cat"]:
-            if name in preds and preds[name]:
-                final_feats.append(np.mean(preds[name], axis=0))
-            else:
-                final_feats.append(np.zeros((1, self.num_classes)))
-
-        stacking_input = np.concatenate(final_feats, axis=1)
-        return torch.FloatTensor(
-            self.meta_model.predict_proba(stacking_input)
-            if self.meta_model
-            else np.mean(final_feats, axis=0)
-        ).to(DEVICE)
-
-
-# ==========================================
-# 4. Main Menu & Loop
+# 3. Main
 # ==========================================
 def detect_model_type_from_path(path):
     try:
         state = torch.load(path, map_location="cpu")
         keys = list(state.keys())
         keys_str = " ".join(keys)
-        if "gc1.weight" in keys:
-            return "gcn"
-        if "conv.0.weight" in keys_str:
-            return "resnet1d"
         if "cls_token" in keys and "fusion_layer.0.weight" in keys:
             return "hybrid"
-        if "enc.layers" in keys_str and "emb.weight" in keys:
-            return "ultimate_transformer"
         if "transformer" in keys_str or "pos_embedding" in keys:
-            return "transformer"
+            return "hybrid"
         return "mlp"
     except:
         return "mlp"
@@ -390,17 +190,17 @@ def detect_model_type_from_path(path):
 
 def main():
     print("\n=== ASL Real-time Recognition ===")
-    print("1) Load Single Model (.pth)")
-    print("2) Full Ensemble - Requires 'models_final/'")
-
-    choice = input("Select (1/2, default 2): ").strip()
-    if not choice:
-        choice = "2"  # Default to Ensemble as user requested "God Mode" implicitly
-
-    ensemble_predictor = None
-    model = None
-    model_type = "mlp"
-
+    
+    # 모델 경로 입력
+    path = input(f"Enter .pth path (default: {MODEL_PATH}): ").strip()
+    if not path:
+        path = MODEL_PATH
+        
+    if not os.path.exists(path):
+        print("File not found.")
+        return
+        
+    # Load label encoder
     try:
         with open(LABEL_ENCODER_PATH, "rb") as f:
             le = pickle.load(f)
@@ -409,36 +209,23 @@ def main():
         print(f"Failed to load label encoder: {e}")
         return
 
-    if choice == "2":
-        model_type = "ensemble"
-        ensemble_predictor = EnsemblePredictor(MODELS_DIR, num_classes)
-        print("God Mode Loaded.")
+    # Load model
+    model_type = detect_model_type_from_path(path)
+    print(f"Detected Type: {model_type}")
+
+    if model_type == "mlp":
+        model = MLP(81, num_classes).to(DEVICE)
+    elif model_type == "hybrid":
+        model = HybridHandModel(num_classes).to(DEVICE)
     else:
-        path = input("Enter .pth path (default: ../train/transformer.pth): ").strip()
-        if not path:
-            path = "../train/transformer.pth"
-        if not os.path.exists(path):
-            print("File not found.")
-            return
-        model_type = detect_model_type_from_path(path)
-        print(f"Detected Type: {model_type}")
+        print(f"Unsupported model type: {model_type}")
+        return
 
-        if model_type == "mlp":
-            model = MLP(81, num_classes).to(DEVICE)
-        elif model_type == "hybrid":
-            model = HybridHandModel(num_classes).to(DEVICE)
-        elif model_type == "resnet1d":
-            model = ResNet1D(num_classes).to(DEVICE)
-        elif model_type == "ultimate_transformer":
-            model = UltimateTransformerModel(num_classes).to(DEVICE)
-        elif model_type == "gcn":
-            model = GCNModel(num_classes).to(DEVICE)
-        else:  # Generic Transformer
-            model = HybridHandModel(num_classes).to(DEVICE)  # Assuming default
+    model.load_state_dict(torch.load(path, map_location=DEVICE))
+    model.eval()
+    print("Model loaded successfully!")
 
-        model.load_state_dict(torch.load(path, map_location=DEVICE))
-        model.eval()
-
+    # Mediapipe setup
     mp_hands = mp.solutions.hands
     mp_drawing = mp.solutions.drawing_utils
     hands = mp_hands.Hands(max_num_hands=1, min_detection_confidence=0.7)
@@ -468,9 +255,7 @@ def main():
 
                 try:
                     inp = preprocess_input(lm, model_type)
-                    if model_type == "ensemble":
-                        out = ensemble_predictor.predict(inp[0], inp[1])
-                    elif model_type == "mlp":
+                    if model_type == "mlp":
                         out = model(inp)
                     else:
                         out = model(inp[0], inp[1])
@@ -491,7 +276,7 @@ def main():
                     print(e)
 
         cv2.putText(frame, txt, (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
-        cv2.imshow("Realtime ASL God Mode", frame)
+        cv2.imshow("Realtime ASL Recognition", frame)
         if cv2.waitKey(1) == ord("q"):
             break
 

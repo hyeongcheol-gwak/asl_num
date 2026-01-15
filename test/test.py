@@ -17,13 +17,9 @@ warnings.filterwarnings("ignore")
 INPUT_VIDEO_PATH = "test_video.mp4"
 OUTPUT_TXT_PATH = "result.txt"
 LABEL_ENCODER_PATH = "../train/label_encoder.pkl"
+MODEL_PATH = "../train/transformer.pth"  # 사용할 모델 경로
 THRESHOLD = 0.0
-MODELS_DIR = "models_final"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-# 모델 실행 모드 설정
-USE_ENSEMBLE = True  # True: 앙상블 모드 (Full Stacking), False: 단일 모델 모드
-SINGLE_MODEL_PATH = "../train/transformer.pth"  # 단일 모델 모드일 때 사용할 모델 경로
 
 # ==========================================
 # 1. 모델 정의 (All Classes)
@@ -108,102 +104,10 @@ class HybridHandModel(nn.Module):
         return self.fusion_layer(combined)
 
 
-# 1.3 ResNet1D (from train_ultimate.py)
-class ResNet1D(nn.Module):
-    def __init__(self, num_classes):
-        super().__init__()
-        self.conv = nn.Sequential(
-            nn.Conv1d(3, 64, 3, 1, 1),
-            nn.BatchNorm1d(64),
-            nn.GELU(),
-            nn.Conv1d(64, 128, 3, 2, 1),
-            nn.BatchNorm1d(128),
-            nn.GELU(),
-            nn.Conv1d(128, 256, 3, 2, 1),
-            nn.BatchNorm1d(256),
-            nn.GELU(),
-        )
-        self.geo_fc = nn.Sequential(nn.Linear(20, 64), nn.GELU())
-        self.head = nn.Linear(256 + 64, num_classes)
-
-    def forward(self, x, geo):
-        f = self.conv(x.permute(0, 2, 1)).mean(dim=2)
-        g = self.geo_fc(geo)
-        return self.head(torch.cat([f, g], dim=1))
-
-
-# 1.4 UltimateTransformer (from train_ultimate.py)
-class UltimateTransformerModel(nn.Module):
-    def __init__(self, num_classes):
-        super().__init__()
-        self.emb = nn.Linear(3, 128)
-        self.pos = nn.Parameter(torch.randn(1, 21, 128) * 0.02)
-        self.enc = nn.TransformerEncoder(
-            nn.TransformerEncoderLayer(128, 8, 256, 0.2, "gelu", batch_first=True), 4
-        )
-        self.geo_fc = nn.Sequential(nn.Linear(20, 64), nn.GELU())
-        self.head = nn.Linear(128 + 64, num_classes)
-
-    def forward(self, x, geo):
-        x = self.enc(self.emb(x) + self.pos).mean(dim=1)
-        g = self.geo_fc(geo)
-        return self.head(torch.cat([x, g], dim=1))
-
-
-# 1.5 GCNModel (from train_ultimate.py)
-def get_adj():
-    edges = [
-        (0, 1),
-        (1, 2),
-        (2, 3),
-        (3, 4),
-        (0, 5),
-        (5, 6),
-        (6, 7),
-        (7, 8),
-        (0, 9),
-        (9, 10),
-        (10, 11),
-        (11, 12),
-        (0, 13),
-        (13, 14),
-        (14, 15),
-        (15, 16),
-        (0, 17),
-        (17, 18),
-        (18, 19),
-        (19, 20),
-    ]
-    A = np.eye(21, dtype=np.float32)
-    for i, j in edges:
-        A[i, j] = A[j, i] = 1.0
-    D = np.sum(A, axis=0)
-    D_mat = np.diag(np.power(D, -0.5))
-    return torch.tensor(D_mat @ A @ D_mat, dtype=torch.float32).to(DEVICE)
-
-
-ADJ_MATRIX = get_adj()
-
-
-class GCNModel(nn.Module):
-    def __init__(self, num_classes):
-        super().__init__()
-        self.gc1 = nn.Linear(3, 64)
-        self.gc2 = nn.Linear(64, 128)
-        self.gc3 = nn.Linear(128, 256)
-        self.head = nn.Linear(256, num_classes)
-
-    def forward(self, x, geo):  # geo not used
-        adj = ADJ_MATRIX
-        x = F.gelu(torch.matmul(adj, self.gc1(x)))
-        x = F.gelu(torch.matmul(adj, self.gc2(x)))
-        x = F.gelu(torch.matmul(adj, self.gc3(x))).mean(dim=1)
-        return self.head(x)
-
-
 # ==========================================
 # 2. 특징 추출 및 전처리 함수
 # ==========================================
+
 
 
 def compute_geometric_features(landmarks):
@@ -314,13 +218,9 @@ def preprocess_input(landmarks, model_type):
         features = extract_features_mlp(normalized)
         return torch.FloatTensor(features).unsqueeze(0).to(DEVICE)
 
-    elif model_type in ["hybrid", "ultimate_transformer", "resnet1d", "gcn", "ensemble"]:
-        # Deep Learning Models: (1, 21, 3) coords AND (1, 20) geo
+    elif model_type == "hybrid":
+        # Hybrid Model: (1, 21, 3) coords AND (1, 20) geo
         geo = compute_geometric_features(normalized)  # (1, 20)
-
-        # For ML models in ensemble, we need (1, 83) = flattened(63) + geo(20)
-        # But we handle that inside the ensemble predictor.
-
         return (
             torch.FloatTensor(normalized).unsqueeze(0).to(DEVICE),
             torch.FloatTensor(geo).to(DEVICE),
@@ -330,120 +230,9 @@ def preprocess_input(landmarks, model_type):
 
 
 # ==========================================
-# 3. Ensemble Helper
-# ==========================================
-
-
-class EnsemblePredictor:
-    def __init__(self, models_dir="models_final", num_classes=10):
-        self.models_dir = models_dir
-        self.num_classes = num_classes
-        self.dl_models = []  # (name, fold, model_instance)
-        self.ml_models = []  # (name, fold, model_instance)
-        self.meta_model = None
-
-        self.load_models()
-
-    def load_models(self):
-        print("Loading Ensemble Models...")
-
-        # 1. Deep Learning Models
-        dl_classes = {"res": ResNet1D, "trans": UltimateTransformerModel, "gcn": GCNModel}
-
-        for name, cls in dl_classes.items():
-            for fold in range(5):
-                path = os.path.join(self.models_dir, f"{name}_fold{fold}.pth")
-                if os.path.exists(path):
-                    model = cls(self.num_classes).to(DEVICE)
-                    model.load_state_dict(torch.load(path, map_location=DEVICE))
-                    model.eval()
-                    self.dl_models.append((name, fold, model))
-                    # print(f"Loaded {name} fold {fold}")
-
-        # 2. Machine Learning Models
-        try:
-            import xgboost as xgb
-            import lightgbm as lgb
-            import catboost as cb
-        except ImportError:
-            print(
-                "Warning: ML libraries (xgboost, lightgbm, catboost) not found. ML models will be skipped."
-            )
-
-        ml_names = ["xgb", "lgbm", "cat"]
-        for name in ml_names:
-            for fold in range(5):
-                path = os.path.join(self.models_dir, f"{name}_fold{fold}.pkl")
-                if os.path.exists(path):
-                    with open(path, "rb") as f:
-                        model = pickle.load(f)
-                    self.ml_models.append((name, fold, model))
-                    # print(f"Loaded {name} fold {fold}")
-
-        # 3. Meta Model
-        meta_path = os.path.join(self.models_dir, "meta_model.pkl")
-        if os.path.exists(meta_path):
-            with open(meta_path, "rb") as f:
-                self.meta_model = pickle.load(f)
-            print("Loaded Meta Model")
-        else:
-            print("Warning: Meta Model not found!")
-
-        print(f"Total DL Models: {len(self.dl_models)}, ML Models: {len(self.ml_models)}")
-
-    def predict(self, coords, geo):
-        # coords: Tensor (1, 21, 3)
-        # geo: Tensor (1, 20)
-
-        preds = {}  # key: model_name, value: list of probs
-
-        # DL Inference
-        with torch.no_grad():
-            for name, _, model in self.dl_models:
-                out = model(coords, geo)  # GCN ignores geo internally
-                prob = F.softmax(out, dim=1).cpu().numpy()
-                if name not in preds:
-                    preds[name] = []
-                preds[name].append(prob)
-
-        # ML Inference
-        # Prepare ML Input: (1, 83) -> Flatten coords + geo
-        coords_np = coords.cpu().numpy().reshape(1, -1)  # (1, 63)
-        geo_np = geo.cpu().numpy()  # (1, 20)
-        ml_input = np.concatenate([coords_np, geo_np], axis=1)  # (1, 83)
-
-        for name, _, model in self.ml_models:
-            prob = model.predict_proba(ml_input)
-            if name not in preds:
-                preds[name] = []
-            preds[name].append(prob)
-
-        # Aggregate (Average folds)
-        final_feats = []
-        # Order must match train_ultimate.py: res, trans, gcn, xgb, lgbm, cat
-        order = ["res", "trans", "gcn", "xgb", "lgbm", "cat"]
-
-        for name in order:
-            if name in preds and len(preds[name]) > 0:
-                avg_prob = np.mean(preds[name], axis=0)  # (1, num_classes)
-                final_feats.append(avg_prob)
-            else:
-                # If model missing, substitute with zeros (risky but handles missing files)
-                final_feats.append(np.zeros((1, self.num_classes)))
-
-        stacking_input = np.concatenate(final_feats, axis=1)  # (1, num_classes * 6)
-
-        if self.meta_model:
-            final_prob = self.meta_model.predict_proba(stacking_input)
-            return torch.FloatTensor(final_prob).to(DEVICE)
-        else:
-            # Fallback: simple average of all available models
-            return torch.FloatTensor(np.mean(final_feats, axis=0)).to(DEVICE)
-
-
-# ==========================================
 # 4. Main Logic
 # ==========================================
+
 
 
 def detect_model_type_from_path(path):
@@ -471,10 +260,6 @@ def detect_model_type_from_path(path):
 def main():
     print("=== ASL Recognition Test (Video) ===")
 
-    ensemble_predictor = None
-    model = None
-    model_type = "mlp"
-
     # Label Encoder Load
     try:
         with open(LABEL_ENCODER_PATH, "rb") as f:
@@ -484,35 +269,27 @@ def main():
         print(f"Error loading label encoder: {e}")
         return
 
-    if USE_ENSEMBLE:
-        print(f"Mode: Full Ensemble using '{MODELS_DIR}'")
-        model_type = "ensemble"
-        ensemble_predictor = EnsemblePredictor(MODELS_DIR, num_classes)
-        print("Ensemble Initialized.")
+    # Model Loading
+    print(f"Loading Model: '{MODEL_PATH}'")
+    
+    if not os.path.exists(MODEL_PATH):
+        print(f"Model file not found: {MODEL_PATH}")
+        return
+
+    model_type = detect_model_type_from_path(MODEL_PATH)
+    print(f"Detected Model Type: {model_type}")
+
+    if model_type == "mlp":
+        model = MLP(81, num_classes).to(DEVICE)
+    elif model_type == "hybrid":
+        model = HybridHandModel(num_classes).to(DEVICE)
     else:
-        path = SINGLE_MODEL_PATH
-        print(f"Mode: Single Model using '{path}'")
+        print(f"Unsupported model type: {model_type}")
+        return
 
-        if not os.path.exists(path):
-            print(f"Model file not found: {path}")
-            return
-
-        model_type = detect_model_type_from_path(path)
-        print(f"Detected Model Type: {model_type}")
-
-        if model_type == "mlp":
-            model = MLP(81, num_classes).to(DEVICE)
-        elif model_type == "hybrid":
-            model = HybridHandModel(num_classes).to(DEVICE)
-        elif model_type == "resnet1d":
-            model = ResNet1D(num_classes).to(DEVICE)
-        elif model_type == "ultimate_transformer":
-            model = UltimateTransformerModel(num_classes).to(DEVICE)
-        elif model_type == "gcn":
-            model = GCNModel(num_classes).to(DEVICE)
-
-        model.load_state_dict(torch.load(path, map_location=DEVICE))
-        model.eval()
+    model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
+    model.eval()
+    print("Model loaded successfully!")
 
     # Video Processing
     mp_hands = mp.solutions.hands
@@ -549,13 +326,9 @@ def main():
                     try:
                         inp = preprocess_input(lm_list, model_type)
 
-                        if model_type == "ensemble":
-                            # inp is (coords, geo)
-                            outputs = ensemble_predictor.predict(inp[0], inp[1])
-                        elif model_type == "mlp":
+                        if model_type == "mlp":
                             outputs = model(inp)
-                        else:
-                            # DL models taking x, geo
+                        else:  # hybrid
                             outputs = model(inp[0], inp[1])
 
                         probs = F.softmax(outputs, dim=1)
