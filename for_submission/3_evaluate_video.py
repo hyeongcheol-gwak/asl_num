@@ -24,7 +24,7 @@ MODEL_PATH = "../train/mlp.pth"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # 제스처 전환 감지 설정
-STABILITY_FRAMES = 10  # 안정적인 제스처로 판단하기 위한 최소 프레임 수
+STABILITY_FRAMES = 5  # 안정적인 제스처로 판단하기 위한 최소 프레임 수
 CHANGE_THRESHOLD = 0.15  # 랜드마크 변화량 임계값 (새 제스처 감지)
 
 # ==========================================
