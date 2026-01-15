@@ -17,6 +17,7 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 BATCH_SIZE = 64
 SEED = 76
 
+
 # Set seed
 def seed_everything(seed):
     np.random.seed(seed)
@@ -24,11 +25,13 @@ def seed_everything(seed):
     if torch.cuda.is_available():
         torch.cuda.manual_seed(seed)
 
+
 seed_everything(SEED)
 
 # ==========================================
 # 1. Model Definitions
 # ==========================================
+
 
 # 1.1 MLP
 class MLP(nn.Module):
@@ -57,14 +60,24 @@ class MLP(nn.Module):
     def forward(self, x):
         return self.model(x)
 
+
 # 1.2 HybridHandModel
 class HybridHandModel(nn.Module):
-    def __init__(self, num_classes=10, d_model=64, nhead=4, num_layers=3, dim_feedforward=128, dropout=0.1):
+    def __init__(
+        self, num_classes=10, d_model=64, nhead=4, num_layers=3, dim_feedforward=128, dropout=0.1
+    ):
         super().__init__()
         self.input_projection = nn.Linear(3, d_model)
         self.pos_embedding = nn.Parameter(torch.randn(1, 22, d_model))
         self.cls_token = nn.Parameter(torch.randn(1, 1, d_model))
-        encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, dim_feedforward=dim_feedforward, dropout=dropout, batch_first=True, activation="gelu")
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model,
+            nhead=nhead,
+            dim_feedforward=dim_feedforward,
+            dropout=dropout,
+            batch_first=True,
+            activation="gelu",
+        )
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
         self.geo_mlp = nn.Sequential(
             nn.Linear(20, 64),
@@ -96,6 +109,7 @@ class HybridHandModel(nn.Module):
         g_feature = self.geo_mlp(x_geo)
         return self.fusion_layer(torch.cat((t_feature, g_feature), dim=1))
 
+
 # 1.3 ResNet1D
 class ResNet1D(nn.Module):
     def __init__(self, num_classes):
@@ -119,6 +133,7 @@ class ResNet1D(nn.Module):
         g = self.geo_fc(geo)
         return self.head(torch.cat([f, g], dim=1))
 
+
 # 1.4 UltimateTransformer
 class UltimateTransformerModel(nn.Module):
     def __init__(self, num_classes):
@@ -136,15 +151,42 @@ class UltimateTransformerModel(nn.Module):
         g = self.geo_fc(geo)
         return self.head(torch.cat([x, g], dim=1))
 
+
 # 1.5 GCNModel
 def get_adj():
-    edges = [(0, 1), (1, 2), (2, 3), (3, 4), (0, 5), (5, 6), (6, 7), (7, 8), (0, 9), (9, 10), (10, 11), (11, 12), (0, 13), (13, 14), (14, 15), (15, 16), (0, 17), (17, 18), (18, 19), (19, 20)]
+    edges = [
+        (0, 1),
+        (1, 2),
+        (2, 3),
+        (3, 4),
+        (0, 5),
+        (5, 6),
+        (6, 7),
+        (7, 8),
+        (0, 9),
+        (9, 10),
+        (10, 11),
+        (11, 12),
+        (0, 13),
+        (13, 14),
+        (14, 15),
+        (15, 16),
+        (0, 17),
+        (17, 18),
+        (18, 19),
+        (19, 20),
+    ]
     A = np.eye(21, dtype=np.float32)
     for i, j in edges:
         A[i, j] = A[j, i] = 1.0
-    return torch.tensor(np.diag(np.power(np.sum(A, axis=0), -0.5)) @ A @ np.diag(np.power(np.sum(A, axis=0), -0.5)), dtype=torch.float32).to(DEVICE)
+    return torch.tensor(
+        np.diag(np.power(np.sum(A, axis=0), -0.5)) @ A @ np.diag(np.power(np.sum(A, axis=0), -0.5)),
+        dtype=torch.float32,
+    ).to(DEVICE)
+
 
 ADJ_MATRIX = get_adj()
+
 
 class GCNModel(nn.Module):
     def __init__(self, num_classes):
@@ -161,58 +203,99 @@ class GCNModel(nn.Module):
         x = F.gelu(torch.matmul(adj, self.gc3(x))).mean(dim=1)
         return self.head(x)
 
+
 # ==========================================
 # 2. Preprocessing Functions
 # ==========================================
 def extract_features_mlp(landmarks):
     # landmarks: (N, 21, 3)
     N = landmarks.shape[0]
-    lm_flat = landmarks.reshape(N, -1) # (N, 63)
-    
+    lm_flat = landmarks.reshape(N, -1)  # (N, 63)
+
     # Calculate angles
-    fingers = [[1, 2, 3], [2, 3, 4], [0, 5, 6], [5, 6, 7], [6, 7, 8], [0, 9, 10], [9, 10, 11], [10, 11, 12], [0, 13, 14], [13, 14, 15], [14, 15, 16], [0, 17, 18], [17, 18, 19], [18, 19, 20]]
+    fingers = [
+        [1, 2, 3],
+        [2, 3, 4],
+        [0, 5, 6],
+        [5, 6, 7],
+        [6, 7, 8],
+        [0, 9, 10],
+        [9, 10, 11],
+        [10, 11, 12],
+        [0, 13, 14],
+        [13, 14, 15],
+        [14, 15, 16],
+        [0, 17, 18],
+        [17, 18, 19],
+        [18, 19, 20],
+    ]
     angles_list = []
     for f in fingers:
         v1 = landmarks[:, f[0]] - landmarks[:, f[1]]
         v2 = landmarks[:, f[2]] - landmarks[:, f[1]]
-        
+
         norm1 = np.linalg.norm(v1, axis=1)
         norm2 = np.linalg.norm(v2, axis=1)
-        
+
         dot = np.sum(v1 * v2, axis=1)
         angle = np.degrees(np.arccos(np.clip(dot / (norm1 * norm2 + 1e-8), -1.0, 1.0))) / 180.0
         angles_list.append(angle[:, np.newaxis])
-    
-    angles = np.concatenate(angles_list, axis=1) # (N, 14)
-    
+
+    angles = np.concatenate(angles_list, axis=1)  # (N, 14)
+
     # Distances
     dists_list = []
     for t in [8, 12, 16, 20]:
-         d = np.linalg.norm(landmarks[:, 4] - landmarks[:, t], axis=1)
-         dists_list.append(d[:, np.newaxis])
-    dists = np.concatenate(dists_list, axis=1) # (N, 4)
-    
+        d = np.linalg.norm(landmarks[:, 4] - landmarks[:, t], axis=1)
+        dists_list.append(d[:, np.newaxis])
+    dists = np.concatenate(dists_list, axis=1)  # (N, 4)
+
     return np.concatenate([lm_flat, angles, dists], axis=1)
+
 
 def compute_geometric_features(landmarks):
     # landmarks: (N, 21, 3)
-    connections = [(0, 1), (1, 2), (2, 3), (3, 4), (0, 5), (5, 6), (6, 7), (7, 8), (0, 9), (9, 10), (10, 11), (11, 12), (0, 13), (13, 14), (14, 15), (15, 16), (0, 17), (17, 18), (18, 19), (19, 20)]
-    vecs = landmarks[:, [c[1] for c in connections], :] - landmarks[:, [c[0] for c in connections], :]
+    connections = [
+        (0, 1),
+        (1, 2),
+        (2, 3),
+        (3, 4),
+        (0, 5),
+        (5, 6),
+        (6, 7),
+        (7, 8),
+        (0, 9),
+        (9, 10),
+        (10, 11),
+        (11, 12),
+        (0, 13),
+        (13, 14),
+        (14, 15),
+        (15, 16),
+        (0, 17),
+        (17, 18),
+        (18, 19),
+        (19, 20),
+    ]
+    vecs = (
+        landmarks[:, [c[1] for c in connections], :] - landmarks[:, [c[0] for c in connections], :]
+    )
     norms = np.linalg.norm(vecs, axis=2) + 1e-8
-    
+
     finger_indices = []
     for f in range(5):
         finger_indices.extend([(f * 4, f * 4 + 1), (f * 4 + 1, f * 4 + 2), (f * 4 + 2, f * 4 + 3)])
-        
+
     v1 = vecs[:, [f[0] for f in finger_indices], :]
     v2 = vecs[:, [f[1] for f in finger_indices], :]
-    
+
     dot = np.sum(v1 * v2, axis=2)
     norm_mul = norms[:, [f[0] for f in finger_indices]] * norms[:, [f[1] for f in finger_indices]]
     angles = np.arccos(np.clip(dot / norm_mul, -1.0, 1.0))
-    
+
     dists = np.linalg.norm(landmarks[:, [4, 8, 12, 16, 20], :] - landmarks[:, 0, None, :], axis=2)
     return np.concatenate([angles, dists], axis=1)
+
 
 # ==========================================
 # 3. Ensemble Helper
@@ -243,6 +326,7 @@ class EnsemblePredictor:
 
         try:
             import xgboost, lightgbm, catboost
+
             ml_names = ["xgb", "lgbm", "cat"]
             for name in ml_names:
                 for fold in range(5):
@@ -262,14 +346,16 @@ class EnsemblePredictor:
         # coords: Tensor (B, 21, 3)
         # geo: Tensor (B, 20)
         batch_size = coords.size(0)
-        
+
         preds = {}
         with torch.no_grad():
             for name, _, model in self.dl_models:
                 p = F.softmax(model(coords, geo), dim=1).cpu().numpy()
                 preds.setdefault(name, []).append(p)
 
-        ml_in = np.concatenate([coords.cpu().numpy().reshape(batch_size, -1), geo.cpu().numpy()], axis=1)
+        ml_in = np.concatenate(
+            [coords.cpu().numpy().reshape(batch_size, -1), geo.cpu().numpy()], axis=1
+        )
         for name, _, model in self.ml_models:
             # ML models usually don't support batch predict nicely if passed purely as object but here they should
             # Sklearn style predict_proba
@@ -285,35 +371,38 @@ class EnsemblePredictor:
             else:
                 final_feats.append(np.zeros((batch_size, self.num_classes)))
 
-        stacking_input = np.concatenate(final_feats, axis=1) # (B, 6*Class)
-        
+        stacking_input = np.concatenate(final_feats, axis=1)  # (B, 6*Class)
+
         if self.meta_model:
-            return self.meta_model.predict(stacking_input) # Returns labels directly if predict, predict_proba for probs
+            return self.meta_model.predict(
+                stacking_input
+            )  # Returns labels directly if predict, predict_proba for probs
         else:
             return np.argmax(np.mean(final_feats, axis=0), axis=1)
+
 
 # ==========================================
 # 4. Main Evaluation Logic
 # ==========================================
 def evaluate_model(model, X_test, y_test, model_type="mlp", batch_size=256):
-    model.eval() if hasattr(model, 'eval') else None
-    
+    model.eval() if hasattr(model, "eval") else None
+
     preds = []
-    
+
     # Simple Batch Loop
     num_samples = len(X_test)
     for i in range(0, num_samples, batch_size):
-        X_batch = X_test[i:i+batch_size]
-        
+        X_batch = X_test[i : i + batch_size]
+
         # Preprocess
         # Normalize
         wrist = X_batch[:, 0]
         X_batch_rel = X_batch - wrist[:, None]
         max_val = np.max(np.linalg.norm(X_batch_rel, axis=2), axis=1, keepdims=True)
         # Fix broadcasting: (B, 1) -> (B, 1, 1)
-        max_val = max_val[..., np.newaxis] 
+        max_val = max_val[..., np.newaxis]
         X_norm = X_batch_rel / (max_val + 1e-8)
-        
+
         if model_type == "mlp":
             inp = extract_features_mlp(X_norm)
             inp_tensor = torch.FloatTensor(inp).to(DEVICE)
@@ -321,7 +410,7 @@ def evaluate_model(model, X_test, y_test, model_type="mlp", batch_size=256):
                 out = model(inp_tensor)
                 p = out.argmax(dim=1).cpu().numpy()
                 preds.extend(p)
-                
+
         elif model_type == "hybrid":
             geo = compute_geometric_features(X_norm)
             x_t = torch.FloatTensor(X_norm).to(DEVICE)
@@ -330,7 +419,7 @@ def evaluate_model(model, X_test, y_test, model_type="mlp", batch_size=256):
                 out = model(x_t, g_t)
                 p = out.argmax(dim=1).cpu().numpy()
                 preds.extend(p)
-                
+
         elif model_type == "ensemble":
             # Ensemble class handles its own batching/predict logic if we wrote it well,
             # but our predict() takes tensors. Ideally we used the predict method which calls models.
@@ -341,28 +430,31 @@ def evaluate_model(model, X_test, y_test, model_type="mlp", batch_size=256):
             geo = compute_geometric_features(X_norm)
             x_t = torch.FloatTensor(X_norm).to(DEVICE)
             g_t = torch.FloatTensor(geo).to(DEVICE)
-            
-            p = model.predict(x_t, g_t) # Returns numpy array of labels
+
+            p = model.predict(x_t, g_t)  # Returns numpy array of labels
             preds.extend(p)
-            
+
     return np.mean(np.array(preds) == y_test)
+
 
 def main():
     print("Loading Data...")
     df = pd.read_csv("dataset.csv")
     X = df.iloc[:, 1:].values.astype(np.float32).reshape(-1, 21, 3)
     y = df.iloc[:, 0].values
-    
+
     le = LabelEncoder()
     y_enc = le.fit_transform(y)
     NUM_CLASSES = len(le.classes_)
-    
+
     # Split
-    X_train, X_test, y_train, y_test = train_test_split(X, y_enc, test_size=0.1, stratify=y_enc, random_state=SEED)
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y_enc, test_size=0.1, stratify=y_enc, random_state=SEED
+    )
     print(f"Test Set Size: {len(X_test)}")
-    
+
     results = {}
-    
+
     # 1. MLP
     if os.path.exists("mlp.pth"):
         print("Evaluating MLP...")
@@ -372,7 +464,7 @@ def main():
         acc = evaluate_model(mlp_model, X_test, y_test, "mlp")
         results["MLP"] = acc
         print(f"MLP Acc: {acc*100:.2f}%")
-    
+
     # 2. Hybrid (Transformer)
     if os.path.exists("transformer.pth"):
         print("Evaluating Hybrid...")
@@ -381,14 +473,6 @@ def main():
         acc = evaluate_model(hybrid_model, X_test, y_test, "hybrid")
         results["Hybrid"] = acc
         print(f"Hybrid Acc: {acc*100:.2f}%")
-        
-    # 3. Ensemble
-    if os.path.exists("models_final"):
-        print("Evaluating Ensemble...")
-        ensemble_model = EnsemblePredictor("models_final", NUM_CLASSES)
-        acc = evaluate_model(ensemble_model, X_test, y_test, "ensemble")
-        results["Ensemble"] = acc
-        print(f"Ensemble Acc: {acc*100:.2f}%")
 
     # Plotting
     print("\nGenerating Graph...")
@@ -397,40 +481,46 @@ def main():
         return
 
     plt.figure(figsize=(10, 6))
-    
+
     # Rename keys for display if needed
     display_names = {
         "MLP": "MLP (Baseline)",
-        "Hybrid": "Hybrid (Transformer + MLP)",
-        "Ensemble": "Ensemble (GCN, ResNet, Boosting Tree ...)"
+        "Hybrid": "Hybrid (Transformer + Geometric MLP)",
     }
-    
+
     names = [display_names.get(k, k) for k in results.keys()]
     values = [v * 100 for v in results.values()]
-    colors = ['#bdc3c7', '#3498db', '#e74c3c'] 
-    # Match colors to keys if possible, but safe to just list them. 
+    colors = ["#bdc3c7", "#3498db"]
+    # Match colors to keys if possible, but safe to just list them.
     # If fewer models, slice colors.
-    colors = colors[:len(results)]
+    colors = colors[: len(results)]
 
     bars = plt.bar(names, values, color=colors, alpha=0.9, width=0.6)
-    
+
     min_val = min(values)
-    plt.ylim(max(0, min_val - 5), 100.5) 
-    
-    plt.ylabel('Validation Accuracy (%)', fontsize=12, fontweight='bold')
-    plt.title('Model Validation Accuracy', fontsize=16, fontweight='bold', pad=20)
-    plt.grid(axis='y', linestyle='--', alpha=0.6)
-    
+    plt.ylim(max(0, min_val - 5), 100.5)
+
+    plt.ylabel("Validation Accuracy (%)", fontsize=12, fontweight="bold")
+    plt.title("Model Validation Accuracy", fontsize=16, fontweight="bold", pad=20)
+    plt.grid(axis="y", linestyle="--", alpha=0.6)
+
     for bar in bars:
         height = bar.get_height()
-        plt.text(bar.get_x() + bar.get_width()/2., height + 0.1,
-                 f'{height:.2f}%',
-                 ha='center', va='bottom', fontsize=14, fontweight='bold')
-                 
-    output_path = 'validation_comparison.png'
+        plt.text(
+            bar.get_x() + bar.get_width() / 2.0,
+            height + 0.1,
+            f"{height:.2f}%",
+            ha="center",
+            va="bottom",
+            fontsize=14,
+            fontweight="bold",
+        )
+
+    output_path = "validation_comparison.png"
     plt.tight_layout()
     plt.savefig(output_path, dpi=300)
     print(f"Graph saved to {os.path.abspath(output_path)}")
+
 
 if __name__ == "__main__":
     main()
