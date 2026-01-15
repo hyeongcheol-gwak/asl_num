@@ -7,15 +7,15 @@ import torch.nn.functional as F
 import pickle
 import os
 from collections import Counter
+from skimage.metrics import structural_similarity as ssim
 
 # ==========================================
 # 1. 설정 (Paths)
 # ==========================================
-EXTRACTED_DIR = 'extracted_images'   # 첫 번째 코드가 이미지를 저장한 폴더
 OUTPUT_TXT_PATH = "prediction.txt"
 GROUND_TRUTH_PATH = "ground_truth.txt"
-LABEL_ENCODER_PATH = "../train/label_encoder.pkl"
-MODEL_PATH = "../train/mlp.pth"
+LABEL_ENCODER_PATH = "label_encoder.pkl"
+MODEL_PATH = "mlp.pth"
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 VOTE_COUNT = 10  # 한 이미지당 추론 횟수
 
@@ -56,7 +56,67 @@ def preprocess_input(landmarks):
     return torch.FloatTensor(features).unsqueeze(0).to(DEVICE)
 
 # ==========================================
-# 3. 메인 평가 로직
+# 3. 비디오에서 프레임 추출 (메모리에 저장)
+# ==========================================
+def extract_frames_from_video(video_path, threshold=0.95):
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        print("영상을 열 수 없습니다.")
+        return []
+
+    prev_frame = None
+    frame_idx = 0
+    extracted_frames = []
+    
+    # 현재 감지된 '정지 장면'의 프레임들을 담는 리스트
+    current_scene_frames = []
+
+    print("--------------- 분석 시작... ---------------")
+
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        # 처리 속도와 정확도 균형을 위해 그레이스케일 변환
+        gray_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+        if prev_frame is not None:
+            # 두 프레임 간의 구조적 유사도(SSIM) 계산
+            # 1.0에 가까울수록 동일한 이미지임
+            score, _ = ssim(prev_frame, gray_frame, full=True)
+
+            if score < threshold:
+                # 유사도가 임계값보다 낮으면 새로운 이미지가 시작된 것으로 간주
+                if current_scene_frames:
+                    # 이전 장면의 중간 프레임을 저장 (가장 안정적인 프레임)
+                    mid_idx = len(current_scene_frames) // 2
+                    best_frame = current_scene_frames[mid_idx]
+                    extracted_frames.append(best_frame)
+                    print(f"이미지 추출됨: {len(extracted_frames)}번째 [구간 프레임 수: {len(current_scene_frames)}]")
+                    current_scene_frames = []
+            
+            current_scene_frames.append(frame)
+        else:
+            current_scene_frames.append(frame)
+
+        prev_frame = gray_frame
+        frame_idx += 1
+
+        if frame_idx % 100 == 0:
+            print(f"---------- {frame_idx} 프레임 분석 중... ----------")
+
+    # 마지막 장면 처리
+    if current_scene_frames:
+        mid_idx = len(current_scene_frames) // 2
+        extracted_frames.append(current_scene_frames[mid_idx])
+
+    cap.release()
+    print(f"총 {len(extracted_frames)}개의 프레임을 추출했습니다.\n")
+    return extracted_frames
+
+# ==========================================
+# 4. 메인 평가 로직
 # ==========================================
 def main():
     # 1. 모델 및 라벨 엔코더 로드
@@ -69,10 +129,12 @@ def main():
     # 일반적인 평가를 위해 eval() 모드를 사용합니다.
     model.eval() 
 
-    # 2. 이미지 파일 목록 가져오기 (이름순 정렬)
-    img_files = sorted([f for f in os.listdir(EXTRACTED_DIR) if f.endswith(('.png', '.jpg'))])
-    if not img_files:
-        print(f"오류: {EXTRACTED_DIR} 폴더에 이미지가 없습니다.")
+    # 2. 비디오에서 프레임 추출 (메모리에 저장)
+    video_file = 'test_video.mp4'  # 영상 파일 경로
+    extracted_frames = extract_frames_from_video(video_file, threshold=0.90)
+    
+    if not extracted_frames:
+        print("오류: 프레임을 추출할 수 없습니다.")
         return
 
     # 3. MediaPipe 초기화
@@ -80,11 +142,10 @@ def main():
     hands = mp_hands.Hands(static_image_mode=True, max_num_hands=1, min_detection_confidence=0.5)
 
     detected_gestures = []
-    print(f"총 {len(img_files)}개의 이미지를 분석합니다 (다수결 횟수: {VOTE_COUNT}회)...")
+    print(f"----- 총 {len(extracted_frames)}개의 이미지를 분석합니다 [다수결 횟수: {VOTE_COUNT}회] -----")
 
-    for img_name in img_files:
-        img_path = os.path.join(EXTRACTED_DIR, img_name)
-        frame = cv2.imread(img_path)
+    for idx, frame in enumerate(extracted_frames):
+        # 프레임을 RGB로 변환
         image_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         results = hands.process(image_rgb)
 
@@ -97,16 +158,16 @@ def main():
             with torch.no_grad():
                 for _ in range(VOTE_COUNT):
                     outputs = model(features)
-                    idx = torch.max(outputs, 1)[1].item()
-                    votes.append(le.inverse_transform([idx])[0])
+                    idx_pred = torch.max(outputs, 1)[1].item()
+                    votes.append(le.inverse_transform([idx_pred])[0])
             
             # 가장 많이 나온 라벨 선택
             final_prediction = Counter(votes).most_common(1)[0][0]
             detected_gestures.append(final_prediction)
-            print(f"[{img_name}] 예측 결과: {final_prediction} (투표 분포: {Counter(votes)})")
+            print(f"이미지[{idx:03d}] | 예측 결과: {final_prediction} | 투표 분포: {Counter(votes)}")
             # -----------------------
         else:
-            print(f"[{img_name}] 손을 감지하지 못했습니다.")
+            print(f"이미지[{idx:03d}] | 손을 감지하지 못했습니다.")
             detected_gestures.append("Unknown")
 
     # 4. 결과 저장 및 Ground Truth 비교
@@ -118,15 +179,13 @@ def main():
         with open(GROUND_TRUTH_PATH, 'r') as f:
             gt = [line.strip() for line in f if line.strip()]
         
-        print("\n" + "="*30)
-        print("정확도 분석 결과")
-        print("="*30)
+        print("\n"+"="*15 + " 정확도 분석 결과 " + "="*15)
         
         correct = 0
         for i in range(min(len(gt), len(detected_gestures))):
             match = "✓" if str(gt[i]) == str(detected_gestures[i]) else "✗"
             if match == "✓": correct += 1
-            print(f"이미지 {i:03d}: 정답({gt[i]}) | 예측({detected_gestures[i]}) {match}")
+            print(f"이미지[{i:03d}]: 정답[{gt[i]}] | 예측[{detected_gestures[i]}] | 결과: {match}")
         
         accuracy = (correct / len(gt)) * 100 if gt else 0
         print(f"\n최종 정확도: {accuracy:.2f}% ({correct}/{len(gt)})")
