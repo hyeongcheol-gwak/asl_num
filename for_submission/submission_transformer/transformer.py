@@ -117,7 +117,7 @@ def extract_frames_from_video(video_path, threshold=0.95):
     # 현재 감지된 '정지 장면'의 프레임들을 담는 리스트
     current_scene_frames = []
 
-    print("분석 시작... (정밀 분석을 위해 시간이 다소 소요될 수 있습니다)")
+    print("--------------- 분석 시작... ---------------")
 
     while True:
         ret, frame = cap.read()
@@ -139,7 +139,7 @@ def extract_frames_from_video(video_path, threshold=0.95):
                     mid_idx = len(current_scene_frames) // 2
                     best_frame = current_scene_frames[mid_idx]
                     extracted_frames.append(best_frame)
-                    print(f"프레임 추출됨: {len(extracted_frames)}번째 (구간 프레임 수: {len(current_scene_frames)})")
+                    print(f"이미지 추출됨: {len(extracted_frames)}번째 [구간 프레임 수: {len(current_scene_frames)}]")
                     current_scene_frames = []
             
             current_scene_frames.append(frame)
@@ -150,7 +150,7 @@ def extract_frames_from_video(video_path, threshold=0.95):
         frame_idx += 1
 
         if frame_idx % 100 == 0:
-            print(f"{frame_idx} 프레임 분석 중...")
+            print(f"---------- {frame_idx} 프레임 분석 중... ----------")
 
     # 마지막 장면 처리
     if current_scene_frames:
@@ -158,15 +158,13 @@ def extract_frames_from_video(video_path, threshold=0.95):
         extracted_frames.append(current_scene_frames[mid_idx])
 
     cap.release()
-    print(f"완료! 총 {len(extracted_frames)}개의 프레임을 추출했습니다.")
+    print(f"총 {len(extracted_frames)}개의 이미지 추출 완료\n")
     return extracted_frames
 
 # ==========================================
-# 5. 메인 평가 로직 (통합)
+# 5. 메인 평가 로직
 # ==========================================
 def main():
-    print(f"--- HybridHandModel Evaluation (Device: {DEVICE}) ---")
-
     # 1. 모델 및 라벨 로드
     try:
         with open(LABEL_ENCODER_PATH, "rb") as f:
@@ -176,7 +174,7 @@ def main():
         model = HybridHandModel(num_classes=num_classes).to(DEVICE)
         model.load_state_dict(torch.load(MODEL_PATH, map_location=DEVICE))
         model.eval()
-        print("✓ 모델 로드 완료")
+        print("트랜스포머 모델 로드 완료")
     except Exception as e:
         print(f"로드 실패: {e}")
         return
@@ -194,6 +192,7 @@ def main():
     hands = mp_hands.Hands(static_image_mode=True, max_num_hands=1, min_detection_confidence=0.7)
 
     detected_gestures = []
+    print(f"----- 총 {len(extracted_frames)}개의 이미지를 분석합니다 [다수결 횟수: {VOTE_COUNT}회] -----")
 
     with torch.no_grad():
         for idx, frame in enumerate(extracted_frames):
@@ -217,9 +216,9 @@ def main():
                 
                 final_pred = Counter(votes).most_common(1)[0][0]
                 detected_gestures.append(final_pred)
-                print(f"[프레임 {idx:03d}] 예측: {final_pred} (다수결 완료)")
+                print(f"이미지[{idx:03d}] | 예측 결과: {final_pred} | 투표 분포: {Counter(votes)}")
             else:
-                print(f"[프레임 {idx:03d}] 손 감지 실패")
+                print(f"이미지[{idx:03d}] 손 감지 실패")
                 detected_gestures.append("None")
 
     # 4. 결과 저장 및 비교
@@ -232,11 +231,13 @@ def main():
         with open(GROUND_TRUTH_PATH, 'r') as f:
             gt = [line.strip() for line in f if line.strip()]
         
+        print("\n"+"="*15 + " 정확도 분석 결과 " + "="*15)
+        
         correct = 0
-        min_len = min(len(gt), len(detected_gestures))
-        for i in range(min_len):
-            if str(gt[i]) == str(detected_gestures[i]):
-                correct += 1
+        for i in range(min(len(gt), len(detected_gestures))):
+            match = "✓" if str(gt[i]) == str(detected_gestures[i]) else "✗"
+            if match == "✓": correct += 1
+            print(f"이미지[{i:03d}]: 정답[{gt[i]}] | 예측[{detected_gestures[i]}] | 결과: {match}")
         
         acc = (correct / len(gt)) * 100 if gt else 0
         print(f"\n정확도: {acc:.2f}% ({correct}/{len(gt)})")
