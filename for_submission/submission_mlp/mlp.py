@@ -208,7 +208,7 @@ def main():
             # -----------------------
         else:
             print(f"이미지[{idx:03d}] | 손을 감지하지 못했습니다.")
-            detected_gestures.append("Unknown")
+            detected_gestures.append(0)
 
     # 4. 결과 저장 및 Ground Truth 비교
     with open(OUTPUT_TXT_PATH, "w") as f:
