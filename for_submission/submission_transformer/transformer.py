@@ -224,7 +224,7 @@ def main():
 
     # 2. 비디오에서 프레임 추출 (메모리에 저장)
     video_file = "test_video.mp4"  # 영상 파일 경로
-    extracted_frames = extract_frames_from_video(video_file, threshold=0.90)
+    extracted_frames = extract_frames_from_video(video_file, threshold=1)
 
     if not extracted_frames:
         print("오류: 프레임을 추출할 수 없습니다.")
